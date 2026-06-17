@@ -16,7 +16,7 @@
  *   - The web "feature card" empty banners (Diary / Map / Extension).
  *   - View-cache telemetry — webapp uses IndexedDB; not ported. */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -26,6 +26,7 @@ import {
   StyleSheet,
   Text,
   View,
+  ViewToken,
 } from "react-native";
 import { useSelector } from "react-redux";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -42,6 +43,7 @@ import {
   GetFeedRequest,
 } from "../../../reusables/hooks/requests";
 import { useFeedReactions } from "../../../reusables/hooks/useFeedReactions";
+import { persistViewPost } from "../../../reusables/hooks/viewcache";
 
 const RANGE = 20;
 
@@ -86,6 +88,118 @@ export default function Feed() {
     onLongPressReaction,
     onPickFromPopover,
   } = useFeedReactions(posts, setPosts);
+
+  // Per-post view session timestamps. Set when a post enters the
+  // viewport; cleared when it leaves (or unmounts) so we can compute
+  // total visible duration and add it to the viewcache. The next
+  // GetFeedRequest drains the cache and ships it as `viewcache`.
+  const viewStartRef = useRef<Map<string, number>>(new Map());
+
+  const closeViewSession = useCallback(
+    (post: FeedPost) => {
+      const started = viewStartRef.current.get(post.post_id);
+      if (!started) return;
+      viewStartRef.current.delete(post.post_id);
+      const duration = (Date.now() - started) / 1000;
+      if (duration <= 0) return;
+      persistViewPost(post.post_id, {
+        user_id: authentication.user.userID,
+        post_owner_id: post.user.id,
+        duration,
+        created_at: new Date(started).toISOString(),
+      });
+    },
+    [authentication.user.userID],
+  );
+
+  const viewabilityConfigRef = useRef({
+    itemVisiblePercentThreshold: 60,
+    minimumViewTime: 250,
+  });
+
+  const onViewableItemsChanged = useRef(
+    ({
+      viewableItems,
+      changed,
+    }: {
+      viewableItems: ViewToken[];
+      changed: ViewToken[];
+    }) => {
+      // Open a session for newly-visible posts; close + flush for ones
+      // that just left the viewport.
+      const me = authentication.user.userID;
+      changed.forEach(token => {
+        const post = token.item as FeedPost;
+        if (!post?.post_id) return;
+        // Skip the user's own posts — webapp's persistViewPosts gates
+        // on `userID !== post.user.username` for the same reason.
+        if (post.user.username === me) return;
+        if (token.isViewable) {
+          if (!viewStartRef.current.has(post.post_id)) {
+            viewStartRef.current.set(post.post_id, Date.now());
+          }
+        } else {
+          closeViewSession(post);
+        }
+      });
+      // Defensive: if a post is currently viewable but we somehow
+      // missed the entry event, seed a start time.
+      viewableItems.forEach(token => {
+        const post = token.item as FeedPost;
+        if (!post?.post_id) return;
+        if (post.user.username === me) return;
+        if (!viewStartRef.current.has(post.post_id)) {
+          viewStartRef.current.set(post.post_id, Date.now());
+        }
+      });
+    },
+  );
+
+  useEffect(() => {
+    onViewableItemsChanged.current = ({ viewableItems, changed }) => {
+      const me = authentication.user.userID;
+      changed.forEach(token => {
+        const post = token.item as FeedPost;
+        if (!post?.post_id || post.user.username === me) return;
+        if (token.isViewable) {
+          if (!viewStartRef.current.has(post.post_id)) {
+            viewStartRef.current.set(post.post_id, Date.now());
+          }
+        } else {
+          closeViewSession(post);
+        }
+      });
+      viewableItems.forEach(token => {
+        const post = token.item as FeedPost;
+        if (!post?.post_id || post.user.username === me) return;
+        if (!viewStartRef.current.has(post.post_id)) {
+          viewStartRef.current.set(post.post_id, Date.now());
+        }
+      });
+    };
+  }, [authentication.user.userID, closeViewSession]);
+
+  // Flush every open session when the screen tears down so the cache
+  // sees the final duration even for posts still visible at unmount.
+  useEffect(() => {
+    const sessions = viewStartRef.current;
+    return () => {
+      const me = authentication.user.userID;
+      sessions.forEach((started, postID) => {
+        const duration = (Date.now() - started) / 1000;
+        if (duration <= 0) return;
+        // We've lost the post-owner ref by now, so omit it; backend
+        // should tolerate a missing `post_owner_id` for a closing flush.
+        persistViewPost(postID, {
+          user_id: me,
+          post_owner_id: "",
+          duration,
+          created_at: new Date(started).toISOString(),
+        });
+      });
+      sessions.clear();
+    };
+  }, [authentication.user.userID]);
 
   const load = useCallback(
     async (silent: boolean) => {
@@ -210,9 +324,9 @@ export default function Feed() {
             </Pressable>
             <Pressable
               onPress={() =>
-                navigation.navigate('Comments', {
+                navigation.navigate('PostDetail', {
                   post_id: item.post_id,
-                  initialCount: comments,
+                  post: item,
                 })
               }
               hitSlop={8}
@@ -316,6 +430,11 @@ export default function Feed() {
           keyExtractor={(p, i) => p.post_id ?? `post-${i}`}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
+          // Viewport observer drives the viewcache: posts spend
+          // measurable time on screen → duration accumulates → shipped
+          // to the backend on the next GetFeedRequest paginate/refresh.
+          viewabilityConfig={viewabilityConfigRef.current}
+          onViewableItemsChanged={info => onViewableItemsChanged.current(info)}
           ListHeaderComponent={ListHeader}
           ListEmptyComponent={
             <View style={styles.empty}>

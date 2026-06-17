@@ -1,3 +1,4 @@
+/* eslint-disable react-native/no-inline-styles */
 /* Conversation thread — scoped port of
  * webapp/src/app/tabs/messenger/Conversation.tsx (2369 lines).
  *
@@ -29,6 +30,7 @@ import {
   Text,
   TextInput,
   View,
+  ViewToken,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -68,12 +70,14 @@ interface DisplayMessage {
   /** Server-assigned MongoDB ObjectID — monotonic, lexically sortable.
    *  Undefined for optimistic-pending bubbles (they have no _id yet). */
   _id?: string;
+  messageID: string;
   /** True for the locally-authored side of the bubble (right-aligned). */
   isOwn: boolean;
   content: string;
   messageType: string;
   /** Display time string ("Just now", "5 minutes ago", etc.). */
   timeLabel: string;
+  seeners: string[];
   /** True while the optimistic bubble is in flight. */
   pending?: boolean;
   pendingID?: string;
@@ -82,32 +86,32 @@ interface DisplayMessage {
   imageURI?: string;
 }
 
-function toDisplay(
-  m: ThreadMessage,
-  authUserID: string,
-): DisplayMessage {
+function toDisplay(m: ThreadMessage, authUserID: string): DisplayMessage {
   const d = m.messageDate;
   const timeLabel =
     typeof d === 'string'
       ? timeSince(d)
       : d?.time
-        ? `${d.date} · ${d.time}`
-        : timeSince(d?.date ?? '');
+      ? `${d.date} · ${d.time}`
+      : timeSince(d?.date ?? '');
   // For image messages the server returns the persisted URL in
   // `references[0].reference`; older/optimistic shapes may carry it
   // in `content` as a data URL.
   const firstRef = m.references?.[0];
   const imageURI =
     m.messageType === 'image' || firstRef?.referenceMediaType === 'image'
-      ? firstRef?.reference ?? (m.content?.startsWith('data:') ? m.content : undefined)
+      ? firstRef?.reference ??
+        (m.content?.startsWith('data:') ? m.content : undefined)
       : undefined;
   return {
     id: m._id ?? m.pendingID ?? `${m.conversationID}-${m.userID}-${timeLabel}`,
     _id: m._id,
+    messageID: m.messageID,
     isOwn: m.userID === authUserID || m.sender === authUserID,
     content: m.isDeleted ? '[Deleted message]' : m.content,
     messageType: m.messageType,
     timeLabel,
+    seeners: m.seeners,
     pendingID: m.pendingID,
     imageURI,
   };
@@ -152,11 +156,18 @@ export default function Conversation() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState<number | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  // True between the first non-empty keystroke and the next time the
-  // draft empties out. Gates the typing broadcast so we don't hit the
-  // endpoint on every keystroke — matches the webapp behavior.
-  const isAlreadyTypingRef = useRef(false);
+  // Webapp pattern: stay "already typing" for 5s after a broadcast, then
+  // reset. While reset, the next keystroke fires another broadcast.
+  // Using state (not a ref) so the cooldown useEffect picks it up.
+  const [isAlreadyTyping, setIsAlreadyTyping] = useState(false);
   const inputRef = useRef<TextInput>(null);
+  // Seen-on-view tracking. We never re-send IDs the server has already
+  // confirmed (alreadySeenRef), and the queue (unreadRef) is flushed
+  // after a 2s quiet window so a quick scroll-through batches into a
+  // single request instead of one per visible bubble.
+  const alreadySeenRef = useRef<Set<string>>(new Set());
+  const unreadRef = useRef<Set<string>>(new Set());
+  const seenFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // FlatList ref + bottom-proximity tracking so we can flag "new messages"
   // when SSE lands a message while the user is scrolled up.
   const flatListRef = useRef<FlatList<DisplayMessage>>(null);
@@ -170,45 +181,98 @@ export default function Conversation() {
       RANGE,
     );
     if (result) {
-      const next = result.messages.map((m) => toDisplay(m, me));
+      const next = result.messages.map(m => toDisplay(m, me));
       // Drop any pending bubble we're locally tracking that the server
       // has now confirmed (matched by pendingID).
-      setMessages((prev) => {
+      setMessages(prev => {
         const confirmedPendingIDs = new Set(
-          next.map((m) => m.pendingID).filter(Boolean),
+          next.map(m => m.pendingID).filter(Boolean),
         );
         const stillPending = prev.filter(
-          (m) => m.pending && !confirmedPendingIDs.has(m.pendingID),
+          m => m.pending && !confirmedPendingIDs.has(m.pendingID),
         );
         // Preserve any older history already paged in (entries with _id
         // not represented in the page-1 fetch).
-        const fetchedIDs = new Set(next.map((m) => m._id).filter(Boolean));
+        const fetchedIDs = new Set(next.map(m => m._id).filter(Boolean));
         const olderHistory = prev.filter(
-          (m) => !m.pending && m._id && !fetchedIDs.has(m._id),
+          m => !m.pending && m._id && !fetchedIDs.has(m._id),
         );
         return sortNewestFirst([...stillPending, ...next, ...olderHistory]);
       });
       setTotal(result.total);
       setPage(1);
+    }
+    setIsLoading(false);
+  }, [me, params.conversationID]);
 
-      // Mark non-own page-1 messages as seen. Backend filters to actually
-      // unread ones — we send the candidate set, it returns confirmed
-      // seen IDs (we don't track unread locally yet).
-      const candidateIDs = result.messages
-        .filter((m) => m.userID !== me && m.sender !== me)
-        .map((m) => m._id)
-        .filter(Boolean);
-      if (candidateIDs.length > 0) {
+  // Reset per-conversation seen trackers when the route changes. Without
+  // this, swapping into a new thread would re-use the prior thread's
+  // "already seen" set and skip legitimately-unread messages.
+  useEffect(() => {
+    alreadySeenRef.current = new Set();
+    unreadRef.current = new Set();
+    if (seenFlushTimerRef.current) {
+      clearTimeout(seenFlushTimerRef.current);
+      seenFlushTimerRef.current = null;
+    }
+  }, [params.conversationID]);
+
+  // Debounced flush — sends every queued unread ID, then marks them
+  // as already-seen so they don't re-queue if the bubble re-enters
+  // the viewport later. Cancels the prior timer on each new entry so
+  // the request only fires after 2s of viewport quiet.
+  const queueSeen = useCallback(
+    (id: string) => {
+      if (alreadySeenRef.current.has(id)) return;
+      unreadRef.current.add(id);
+      if (seenFlushTimerRef.current) clearTimeout(seenFlushTimerRef.current);
+      seenFlushTimerRef.current = setTimeout(() => {
+        const ids = Array.from(unreadRef.current);
+        if (ids.length === 0) return;
+        // Optimistically mark these as seen before the request returns
+        // so concurrent viewport events don't re-queue them.
+        ids.forEach(x => alreadySeenRef.current.add(x));
+        unreadRef.current.clear();
         SeenMessageRequest({
           conversationID: params.conversationID,
           range: RANGE,
           receivers: params.receivers,
-          messageIDs: candidateIDs,
+          messageIDs: ids,
         });
-      }
-    }
-    setIsLoading(false);
-  }, [me, params.conversationID, params.receivers]);
+      }, 2000);
+    },
+    [params.conversationID, params.receivers],
+  );
+
+  const viewabilityConfigRef = useRef({
+    itemVisiblePercentThreshold: 60,
+    minimumViewTime: 250,
+  });
+
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      viewableItems.forEach(token => {
+        const item = token.item as DisplayMessage;
+        console.log(item.seeners);
+        if (!item || !item.messageID || item.isOwn || item.seeners.includes(me))
+          return;
+        queueSeen(item.messageID);
+      });
+    },
+  );
+
+  // Keep the latest closure reachable inside the ref so the FlatList
+  // callback (which captures the ref ONCE) sees the freshest queueSeen.
+  useEffect(() => {
+    onViewableItemsChanged.current = ({ viewableItems }) => {
+      viewableItems.forEach(token => {
+        const item = token.item as DisplayMessage;
+        if (!item || !item.messageID || item.isOwn || item.seeners.includes(me))
+          return;
+        queueSeen(item.messageID);
+      });
+    };
+  }, [queueSeen, me]);
 
   const loadOlder = useCallback(async () => {
     if (loadingOlder) return;
@@ -222,13 +286,13 @@ export default function Conversation() {
       RANGE,
     );
     if (result) {
-      const older = result.messages.map((m) => toDisplay(m, me));
+      const older = result.messages.map(m => toDisplay(m, me));
       // Dedup by id then sort. Sorting again is cheap and immune to any
       // page-boundary race where SSE landed a brand-new message between
       // the page+1 request firing and the response arriving.
-      setMessages((prev) => {
-        const known = new Set(prev.map((m) => m.id));
-        const fresh = older.filter((m) => !known.has(m.id));
+      setMessages(prev => {
+        const known = new Set(prev.map(m => m.id));
+        const fresh = older.filter(m => !known.has(m.id));
         return sortNewestFirst([...prev, ...fresh]);
       });
       setPage(nextPage);
@@ -269,17 +333,19 @@ export default function Conversation() {
     const pendingID = generateUUID();
     const optimistic: DisplayMessage = {
       id: pendingID,
+      messageID: pendingID,
       isOwn: true,
       content: text,
       messageType: 'text',
       timeLabel: 'Just now',
+      seeners: [],
       pending: true,
       pendingID,
     };
     // Inverted FlatList renders index 0 at the bottom — put new
     // messages at the top of the array. sortNewestFirst keeps pending
     // bubbles ahead of any in-flight SSE arrivals from the other party.
-    setMessages((prev) => sortNewestFirst([optimistic, ...prev]));
+    setMessages(prev => sortNewestFirst([optimistic, ...prev]));
     setDraft('');
     setSending(true);
     const ok = await SendMessageRequest({
@@ -292,13 +358,22 @@ export default function Conversation() {
     });
     if (!ok) {
       // Roll the bubble back if the request failed entirely.
-      setMessages((prev) => prev.filter((m) => m.pendingID !== pendingID));
+      setMessages(prev => prev.filter(m => m.pendingID !== pendingID));
     }
     setSending(false);
     // SSE reload will replace the optimistic bubble with the
     // server-confirmed version (matched on pendingID).
-    isAlreadyTypingRef.current = false;
+    setIsAlreadyTyping(false);
   }, [draft, params, sending]);
+
+  // 5-second typing cooldown — mirrors webapp. After the cooldown,
+  // the next keystroke re-fires IsTypingBroadcastRequest so the other
+  // party's indicator stays alive for the duration of long messages.
+  useEffect(() => {
+    if (!isAlreadyTyping) return;
+    const t = setTimeout(() => setIsAlreadyTyping(false), 5000);
+    return () => clearTimeout(t);
+  }, [isAlreadyTyping]);
 
   const onAttachImages = useCallback(async () => {
     if (attaching) return;
@@ -319,17 +394,19 @@ export default function Conversation() {
       type: p.type,
       name: p.name,
     }));
-    const optimistic: DisplayMessage[] = files.map((f) => ({
+    const optimistic: DisplayMessage[] = files.map(f => ({
       id: f.pendingID,
+      messageID: f.pendingID,
       isOwn: true,
       content: f.reference,
       messageType: 'image',
       timeLabel: 'Just now',
+      seeners: [],
       pending: true,
       pendingID: f.pendingID,
       imageURI: f.reference,
     }));
-    setMessages((prev) => sortNewestFirst([...optimistic, ...prev]));
+    setMessages(prev => sortNewestFirst([...optimistic, ...prev]));
     const ok = await SendFilesRequest({
       conversationID: params.conversationID,
       receivers: params.receivers,
@@ -337,9 +414,9 @@ export default function Conversation() {
       conversationType: params.type,
     });
     if (!ok) {
-      const pendingSet = new Set(files.map((f) => f.pendingID));
-      setMessages((prev) =>
-        prev.filter((m) => !m.pendingID || !pendingSet.has(m.pendingID)),
+      const pendingSet = new Set(files.map(f => f.pendingID));
+      setMessages(prev =>
+        prev.filter(m => !m.pendingID || !pendingSet.has(m.pendingID)),
       );
     }
     setAttaching(false);
@@ -347,19 +424,20 @@ export default function Conversation() {
 
   const onChangeDraft = useCallback(
     (text: string) => {
-      if (text !== '' && !isAlreadyTypingRef.current) {
-        isAlreadyTypingRef.current = true;
+      // Fire only when transitioning from "not typing" → "typing". The
+      // 5s cooldown effect flips isAlreadyTyping back to false, at
+      // which point continued typing re-fires the broadcast so the
+      // receiver's indicator stays alive past the auto-clear window.
+      if (text !== '' && !isAlreadyTyping) {
+        setIsAlreadyTyping(true);
         IsTypingBroadcastRequest({
           conversationID: params.conversationID,
           receivers: params.receivers,
         });
-      } else if (text === '') {
-        // Reset so the next keystroke re-broadcasts.
-        isAlreadyTypingRef.current = false;
       }
       setDraft(text);
     },
-    [params.conversationID, params.receivers],
+    [isAlreadyTyping, params.conversationID, params.receivers],
   );
 
   // Someone else typing in this conversation? Webapp's istyping_broadcast
@@ -371,20 +449,21 @@ export default function Conversation() {
 
   const renderItem = useCallback(
     ({ item }: { item: DisplayMessage }) => {
-      const isText = item.messageType === 'text' || item.messageType === 'notif';
+      const isText =
+        item.messageType === 'text' || item.messageType === 'notif';
       const isImage = item.messageType === 'image' && item.imageURI;
       return (
         <View
-          style={[
-            styles.row,
-            item.isOwn ? styles.rowOwn : styles.rowOther,
-          ]}
+          style={[styles.row, item.isOwn ? styles.rowOwn : styles.rowOther]}
         >
           {isImage ? (
             <View
               style={[
                 styles.imageBubble,
-                { backgroundColor: palette.surface2, opacity: item.pending ? 0.7 : 1 },
+                {
+                  backgroundColor: palette.surface2,
+                  opacity: item.pending ? 0.7 : 1,
+                },
               ]}
             >
               <Image
@@ -438,9 +517,7 @@ export default function Conversation() {
       edges={['top']}
       style={[styles.screen, { backgroundColor: palette.bg }]}
     >
-      <View
-        style={[styles.headerBar, { borderBottomColor: palette.border }]}
-      >
+      <View style={[styles.headerBar, { borderBottomColor: palette.border }]}>
         <IconBtn
           n="arrow-back"
           iconSize={22}
@@ -473,8 +550,8 @@ export default function Conversation() {
             {params.type === 'group'
               ? 'Group chat'
               : params.type === 'server'
-                ? 'Server channel'
-                : 'Direct message'}
+              ? 'Server channel'
+              : 'Direct message'}
           </Text>
         </View>
         <IconBtn
@@ -505,16 +582,25 @@ export default function Conversation() {
             <FlatList
               ref={flatListRef}
               data={messages}
-              keyExtractor={(m) => m.id}
+              keyExtractor={m => m.messageID}
               renderItem={renderItem}
               contentContainerStyle={styles.listContent}
               inverted
               onEndReached={loadOlder}
               onEndReachedThreshold={0.25}
+              // Mark messages as seen only when they actually appear
+              // in the viewport (≥60% visible for ≥250ms). The wrapper
+              // ref dereferences the latest closure so queueSeen stays
+              // current without breaking FlatList's "callback must not
+              // change" rule.
+              viewabilityConfig={viewabilityConfigRef.current}
+              onViewableItemsChanged={info => {
+                onViewableItemsChanged.current(info);
+              }}
               // Inverted list: offset 0 == newest at the bottom of the
               // viewport. Treat anything within 80px as "near bottom" so
               // small momentum/keyboard overshoot doesn't trip the CTA.
-              onScroll={(e) => {
+              onScroll={e => {
                 const y = e.nativeEvent.contentOffset.y;
                 const near = y < 80;
                 isNearBottomRef.current = near;
@@ -569,9 +655,7 @@ export default function Conversation() {
           </View>
         ) : null}
 
-        <View
-          style={[styles.composer, { borderTopColor: palette.border }]}
-        >
+        <View style={[styles.composer, { borderTopColor: palette.border }]}>
           <Pressable
             disabled={attaching}
             onPress={onAttachImages}

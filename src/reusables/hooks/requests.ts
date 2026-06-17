@@ -11,6 +11,7 @@ import sign from 'jwt-encode';
 import { Axios } from './axios_client';
 import envs from './env_configs';
 import { getItem, removeItem, setItem } from './storage';
+import { clearViewPosts, getAllViewCache } from './viewcache';
 import { ConvertedResponse, convertLoginResponse } from './reusable';
 import { authenticationstate } from '../../redux/actions/states';
 import {
@@ -636,11 +637,13 @@ export const ManualInitConversationListRequest = async (
 
 export interface ThreadMessage {
   _id: string;
+  messageID: string;
   conversationID: string;
   userID: string;
   sender?: string;
   content: string;
   messageType: string;
+  seeners: string[];
   isDeleted?: boolean;
   messageDate: { date: string; time?: string } | string;
   pendingID?: string;
@@ -914,17 +917,20 @@ export const GetFeedRequest = async (params: {
   range: number;
 }): Promise<FeedPage> => {
   try {
-    const token = await getItem("authtoken");
-    // NOTE: webapp sends `viewcache` (read post telemetry from IndexedDB).
-    // Skipping until that store is ported — backend accepts an empty array.
+    const token = await getItem('authtoken');
+    // Webapp pattern: drain the AsyncStorage-backed viewcache (per-post
+    // duration telemetry collected while the user scrolled) and ship
+    // it with the request, then clear so we don't double-count.
+    const viewcache = await getAllViewCache(params.current_user_id);
     const response = await Axios.post(
       `${USER_SERVICE_API}/api/newsfeed/default/?page=${params.page}&page_size=${params.range}`,
-      { viewcache: [] },
-      { headers: { "x-access-token": token } },
+      { viewcache },
+      { headers: { 'x-access-token': token } },
     );
+    await clearViewPosts();
     return response.data ?? EMPTY_FEED_PAGE;
   } catch (err) {
-    console.log("[GetFeedRequest]", err);
+    console.log('[GetFeedRequest]', err);
     return EMPTY_FEED_PAGE;
   }
 };
@@ -932,7 +938,13 @@ export const GetFeedRequest = async (params: {
 export interface CreatePostPayload {
   caption: string;
   /** Currently unused — passthrough for future image/video uploads. */
-  references?: { id: number; name: string | null; reference: string; caption: string; referenceMediaType: string }[];
+  references?: {
+    id: number;
+    name: string | null;
+    reference: string;
+    caption: string;
+    referenceMediaType: string;
+  }[];
   /** Defaults to "text"/"text" for caption-only posts. */
   fileType?: string;
   contentType?: string;
@@ -952,8 +964,7 @@ export const CreatePostRequest = async (
   try {
     const token = await getItem('authtoken');
     const refs = payload.references ?? [];
-    const fileType =
-      payload.fileType ?? (refs.length > 0 ? 'media' : 'text');
+    const fileType = payload.fileType ?? (refs.length > 0 ? 'media' : 'text');
     const contentType =
       payload.contentType ?? (refs.length > 0 ? 'media' : 'text');
     const tagged = payload.tagging_users ?? [];
@@ -987,6 +998,25 @@ export const CreatePostRequest = async (
   }
 };
 
+/** Single-post fetch. Webapp hits the same endpoint via
+ *  GetPostPreviewRequest; the response shape matches a FeedPost row
+ *  (with `references`, `activity_counts`, `user_reaction`, etc.). */
+export const GetPostPreviewRequest = async (
+  postID: string,
+): Promise<FeedPost | null> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.get(
+      `${USER_SERVICE_API}/api/newsfeed/preview/${postID}/`,
+      { headers: { 'x-access-token': token } },
+    );
+    return (response.data ?? null) as FeedPost | null;
+  } catch (err) {
+    console.log('[GetPostPreviewRequest]', err);
+    return null;
+  }
+};
+
 export const GetPostRequest = async (params: {
   current_user_id: string;
   userID: string;
@@ -995,18 +1025,20 @@ export const GetPostRequest = async (params: {
   archive?: boolean;
 }): Promise<FeedPage> => {
   try {
-    const token = await getItem("authtoken");
+    const token = await getItem('authtoken');
+    const viewcache = await getAllViewCache(params.current_user_id);
     const response = await Axios.post(
       `${USER_SERVICE_API}/api/newsfeed/profile/${params.userID}/?page=${params.page}&page_size=${params.range}`,
-      { viewcache: [] },
+      { viewcache },
       {
-        headers: { "x-access-token": token },
+        headers: { 'x-access-token': token },
         params: { archive: params.archive },
       },
     );
+    await clearViewPosts();
     return response.data ?? EMPTY_FEED_PAGE;
   } catch (err) {
-    console.log("[GetPostRequest]", err);
+    console.log('[GetPostRequest]', err);
     return EMPTY_FEED_PAGE;
   }
 };
@@ -1058,16 +1090,16 @@ export const GetProfileInfoRequest = async (
   userID: string,
 ): Promise<RealmInfo | null> => {
   try {
-    const token = await getItem("authtoken");
+    const token = await getItem('authtoken');
     const response = await Axios.get(
       `${USER_SERVICE_API}/api/user/auth/${userID}/`,
-      { headers: { "x-access-token": token } },
+      { headers: { 'x-access-token': token } },
     );
     // Webapp uses response.data directly; the backend returns the
     // realm/user object at the top level.
     return (response.data ?? null) as RealmInfo | null;
   } catch (err) {
-    console.log("[GetProfileInfoRequest]", err);
+    console.log('[GetProfileInfoRequest]', err);
     return null;
   }
 };
@@ -1079,17 +1111,14 @@ export const GetMyRealmsRequest = async (
   search?: string,
 ): Promise<RealmPage> => {
   try {
-    const token = await getItem("authtoken");
-    const response = await Axios.get(
-      `${USER_SERVICE_API}/api/realm/my-list`,
-      {
-        headers: { "x-access-token": token },
-        params: { page, page_size: range, type, search },
-      },
-    );
+    const token = await getItem('authtoken');
+    const response = await Axios.get(`${USER_SERVICE_API}/api/realm/my-list`, {
+      headers: { 'x-access-token': token },
+      params: { page, page_size: range, type, search },
+    });
     return response.data ?? EMPTY_REALM_PAGE;
   } catch (err) {
-    console.log("[GetMyRealmsRequest]", err);
+    console.log('[GetMyRealmsRequest]', err);
     return EMPTY_REALM_PAGE;
   }
 };
@@ -1101,17 +1130,14 @@ export const GetFollowRealmRequest = async (
   search?: string,
 ): Promise<RealmPage> => {
   try {
-    const token = await getItem("authtoken");
-    const response = await Axios.get(
-      `${USER_SERVICE_API}/api/realm/follow`,
-      {
-        headers: { "x-access-token": token },
-        params: { page, page_size: range, type, search },
-      },
-    );
+    const token = await getItem('authtoken');
+    const response = await Axios.get(`${USER_SERVICE_API}/api/realm/follow`, {
+      headers: { 'x-access-token': token },
+      params: { page, page_size: range, type, search },
+    });
     return response.data ?? EMPTY_REALM_PAGE;
   } catch (err) {
-    console.log("[GetFollowRealmRequest]", err);
+    console.log('[GetFollowRealmRequest]', err);
     return EMPTY_REALM_PAGE;
   }
 };

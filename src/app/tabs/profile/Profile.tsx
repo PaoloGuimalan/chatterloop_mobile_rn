@@ -221,12 +221,10 @@ export default function Profile() {
       const imageRef = item.references?.find(r =>
         (r.reference_media_type ?? '').includes('image'),
       );
-      const commentCount =
-        item.activity_counts?.find(c => c.count_type === 'comment')?.count ?? 0;
       const openComments = () =>
-        nav.navigate('Comments', {
+        nav.navigate('PostDetail', {
           post_id: item.post_id,
-          initialCount: commentCount,
+          post: item,
         });
       if (imageRef) {
         return (
@@ -234,7 +232,11 @@ export default function Profile() {
             onPress={openComments}
             style={({ pressed }) => [
               styles.tile,
-              { width: tileSize, height: tileSize, opacity: pressed ? 0.85 : 1 },
+              {
+                width: tileSize,
+                height: tileSize,
+                opacity: pressed ? 0.85 : 1,
+              },
             ]}
           >
             <Image

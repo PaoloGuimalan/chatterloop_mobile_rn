@@ -1,3 +1,4 @@
+/* eslint-disable react-native/no-inline-styles */
 /* Page detail — scoped port of webapp/src/app/tabs/profile/user/RealmProfile.tsx.
  *
  * Webapp version mixes the realm banner with a full post composer +
@@ -12,7 +13,7 @@
  * are deferred — they share infrastructure with the unported Feed
  * composer and post detail flows. */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -22,25 +23,25 @@ import {
   StyleSheet,
   Text,
   View,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation, useRoute } from "@react-navigation/native";
-import { useSelector } from "react-redux";
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { useSelector } from 'react-redux';
 
-import type { AppState } from "../../../redux/store";
-import { useTheme } from "../../../reusables/design/ThemeProvider";
-import { Btn, CLIcon, IconBtn } from "../../../reusables/design/primitives";
-import { ReactionPopover } from "../../../reusables/design/ReactionPopover";
-import { radii } from "../../../reusables/design/tokens";
-import { timeSince } from "../../../reusables/hooks/reusable";
+import type { AppState } from '../../../redux/store';
+import { useTheme } from '../../../reusables/design/ThemeProvider';
+import { Btn, CLIcon, IconBtn } from '../../../reusables/design/primitives';
+import { ReactionPopover } from '../../../reusables/design/ReactionPopover';
+import { radii } from '../../../reusables/design/tokens';
+import { timeSince } from '../../../reusables/hooks/reusable';
 import {
   FeedPost,
   FollowRealmRequest,
   GetPostRequest,
   GetProfileInfoRequest,
   UnfollowRealmRequest,
-} from "../../../reusables/hooks/requests";
-import { useFeedReactions } from "../../../reusables/hooks/useFeedReactions";
+} from '../../../reusables/hooks/requests';
+import { useFeedReactions } from '../../../reusables/hooks/useFeedReactions';
 
 interface PageDetailParams {
   realmID: string;
@@ -59,21 +60,21 @@ function countByType(
   type: string,
 ): number {
   if (!counts) return 0;
-  return counts.find((c) => c.count_type === type)?.count ?? 0;
+  return counts.find(c => c.count_type === type)?.count ?? 0;
 }
 
 function firstImageURI(post: FeedPost): string | undefined {
-  const ref = post.references?.find((r) =>
-    (r.reference_media_type ?? "").includes("image"),
+  const ref = post.references?.find(r =>
+    (r.reference_media_type ?? '').includes('image'),
   );
   return ref?.reference;
 }
 
-function authorName(author: FeedPost["user"]): string {
+function authorName(author: FeedPost['user']): string {
   const middle =
-    author.middle_name && author.middle_name !== "N/A"
+    author.middle_name && author.middle_name !== 'N/A'
       ? ` ${author.middle_name}`
-      : "";
+      : '';
   return `${author.first_name}${middle} ${author.last_name}`.trim();
 }
 
@@ -95,7 +96,7 @@ export default function PageDetail() {
 
   useEffect(() => {
     let cancelled = false;
-    GetProfileInfoRequest(params.realmID).then((info) => {
+    GetProfileInfoRequest(params.realmID).then(info => {
       if (cancelled || !info) return;
       setFollowing(!!info.is_follower);
     });
@@ -140,7 +141,7 @@ export default function PageDetail() {
   }, [load]);
 
   const openComposer = useCallback(() => {
-    navigation.navigate("NewPost", {
+    navigation.navigate('NewPost', {
       realm_id: params.realmID,
       realm_name: params.name,
       // Silent refresh so the new post lands at the top without a
@@ -164,10 +165,10 @@ export default function PageDetail() {
   const renderItem = useCallback(
     ({ item }: { item: FeedPost }) => {
       const name = authorName(item.user);
-      const hasProfile = item.user.profile && item.user.profile !== "none";
+      const hasProfile = item.user.profile && item.user.profile !== 'none';
       const imageURI = firstImageURI(item);
-      const likes = countByType(item.activity_counts, "like");
-      const comments = countByType(item.activity_counts, "comment");
+      const likes = countByType(item.activity_counts, 'like');
+      const comments = countByType(item.activity_counts, 'comment');
 
       return (
         <View
@@ -190,7 +191,9 @@ export default function PageDetail() {
                   { backgroundColor: palette.brandSoft },
                 ]}
               >
-                <Text style={[styles.fallbackInitial, { color: palette.brand }]}>
+                <Text
+                  style={[styles.fallbackInitial, { color: palette.brand }]}
+                >
                   {item.user.first_name.charAt(0).toUpperCase()}
                 </Text>
               </View>
@@ -219,7 +222,9 @@ export default function PageDetail() {
               resizeMode="cover"
             />
           ) : null}
-          <View style={[styles.postActions, { borderTopColor: palette.border }]}>
+          <View
+            style={[styles.postActions, { borderTopColor: palette.border }]}
+          >
             <Pressable
               onPress={() => onTapReaction(item)}
               onLongPress={() => onLongPressReaction(item)}
@@ -231,7 +236,7 @@ export default function PageDetail() {
               ]}
             >
               <CLIcon
-                n={item.user_reaction ? "favorite" : "favorite-border"}
+                n={item.user_reaction ? 'favorite' : 'favorite-border'}
                 size={20}
                 color={item.user_reaction ? palette.pink : palette.text2}
               />
@@ -241,9 +246,9 @@ export default function PageDetail() {
             </Pressable>
             <Pressable
               onPress={() =>
-                navigation.navigate("Comments", {
+                navigation.navigate('PostDetail', {
                   post_id: item.post_id,
-                  initialCount: comments,
+                  post: item,
                 })
               }
               hitSlop={8}
@@ -265,8 +270,8 @@ export default function PageDetail() {
     [navigation, onLongPressReaction, onTapReaction, palette],
   );
 
-  const hasAvatar = params.profile && params.profile !== "none";
-  const hasCover = params.cover && params.cover !== "none";
+  const hasAvatar = params.profile && params.profile !== 'none';
+  const hasCover = params.cover && params.cover !== 'none';
   const initial = params.name.charAt(0).toUpperCase();
 
   const ListHeader = (
@@ -274,7 +279,7 @@ export default function PageDetail() {
       <View
         style={[
           styles.cover,
-          { backgroundColor: hasCover ? "transparent" : palette.surface2 },
+          { backgroundColor: hasCover ? 'transparent' : palette.surface2 },
         ]}
       >
         {hasCover ? (
@@ -292,13 +297,13 @@ export default function PageDetail() {
         ]}
       >
         <View
-          style={[
-            styles.bannerAvatarWrap,
-            { borderColor: palette.surface },
-          ]}
+          style={[styles.bannerAvatarWrap, { borderColor: palette.surface }]}
         >
           {hasAvatar ? (
-            <Image source={{ uri: params.profile }} style={styles.bannerAvatar} />
+            <Image
+              source={{ uri: params.profile }}
+              style={styles.bannerAvatar}
+            />
           ) : (
             <View
               style={[
@@ -336,9 +341,9 @@ export default function PageDetail() {
         </View>
         <Btn
           size="sm"
-          variant={following ? "outline" : "primary"}
-          label={following ? "Following" : "Follow"}
-          iconL={following ? "check" : "add"}
+          variant={following ? 'outline' : 'primary'}
+          label={following ? 'Following' : 'Follow'}
+          iconL={following ? 'check' : 'add'}
           disabled={followBusy}
           onPress={onToggleFollow}
           style={styles.followBtn}
@@ -357,22 +362,18 @@ export default function PageDetail() {
           ]}
         >
           <CLIcon n="edit" size={16} color={palette.brand} />
-          <Text
-            style={[styles.pageComposerText, { color: palette.text2 }]}
-          >
+          <Text style={[styles.pageComposerText, { color: palette.text2 }]}>
             Write a post on {params.name}…
           </Text>
         </Pressable>
       ) : null}
-      <Text style={[styles.sectionLabel, { color: palette.text3 }]}>
-        POSTS
-      </Text>
+      <Text style={[styles.sectionLabel, { color: palette.text3 }]}>POSTS</Text>
     </View>
   );
 
   return (
     <SafeAreaView
-      edges={["top"]}
+      edges={['top']}
       style={[styles.screen, { backgroundColor: palette.bg }]}
     >
       <View style={styles.headerBar}>
@@ -440,8 +441,8 @@ export default function PageDetail() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   headerBar: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 10,
     paddingTop: 6,
     paddingBottom: 10,
@@ -449,18 +450,18 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 17,
-    fontWeight: "800",
+    fontWeight: '800',
     letterSpacing: -0.3,
     flex: 1,
   },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   listContent: { padding: 12, gap: 8 },
 
   cover: {
-    width: "100%",
+    width: '100%',
     height: 120,
     borderRadius: radii.md,
-    overflow: "hidden",
+    overflow: 'hidden',
   },
   banner: {
     marginTop: -34,
@@ -468,47 +469,47 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     padding: 14,
     paddingTop: 38,
-    alignItems: "center",
+    alignItems: 'center',
     gap: 8,
   },
   bannerAvatarWrap: {
-    position: "absolute",
+    position: 'absolute',
     top: -34,
     width: 76,
     height: 76,
     borderRadius: radii.pill,
     borderWidth: 3,
-    overflow: "hidden",
+    overflow: 'hidden',
   },
-  bannerAvatar: { width: "100%", height: "100%" },
-  avatarFallback: { alignItems: "center", justifyContent: "center" },
-  bannerInitial: { fontSize: 28, fontWeight: "800" },
-  fallbackInitial: { fontWeight: "700" },
-  bannerCopy: { alignItems: "center", gap: 4 },
+  bannerAvatar: { width: '100%', height: '100%' },
+  avatarFallback: { alignItems: 'center', justifyContent: 'center' },
+  bannerInitial: { fontSize: 28, fontWeight: '800' },
+  fallbackInitial: { fontWeight: '700' },
+  bannerCopy: { alignItems: 'center', gap: 4 },
   bannerNameRow: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 5,
   },
-  bannerName: { fontSize: 17, fontWeight: "800" },
-  bannerDesc: { fontSize: 12.5, textAlign: "center", lineHeight: 17 },
+  bannerName: { fontSize: 17, fontWeight: '800' },
+  bannerDesc: { fontSize: 12.5, textAlign: 'center', lineHeight: 17 },
   followBtn: { marginTop: 6, minWidth: 130 },
 
   pageComposer: {
     marginTop: 16,
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
     borderWidth: 1,
     borderRadius: radii.md,
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  pageComposerText: { flex: 1, fontSize: 13, fontWeight: "600" },
+  pageComposerText: { flex: 1, fontSize: 13, fontWeight: '600' },
 
   sectionLabel: {
     fontSize: 11,
-    fontWeight: "700",
+    fontWeight: '700',
     letterSpacing: 0.6,
     marginTop: 16,
     marginLeft: 4,
@@ -520,35 +521,35 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 10,
   },
-  postHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  postHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   postAvatar: { width: 40, height: 40, borderRadius: radii.pill },
   postHeaderText: { flex: 1, minWidth: 0 },
-  postAuthor: { fontSize: 14, fontWeight: "700" },
+  postAuthor: { fontSize: 14, fontWeight: '700' },
   postMeta: { fontSize: 11.5, marginTop: 1 },
   postCaption: { fontSize: 14, lineHeight: 20 },
-  postMedia: { width: "100%", aspectRatio: 4 / 3, borderRadius: radii.sm },
+  postMedia: { width: '100%', aspectRatio: 4 / 3, borderRadius: radii.sm },
   postActions: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 18,
     paddingTop: 10,
     borderTopWidth: 1,
   },
-  actionGroup: { flexDirection: "row", alignItems: "center", gap: 6 },
+  actionGroup: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   actionPressable: {
     paddingVertical: 4,
     paddingHorizontal: 4,
     marginHorizontal: -4,
   },
-  actionLabel: { fontSize: 12.5, fontWeight: "600" },
+  actionLabel: { fontSize: 12.5, fontWeight: '600' },
 
   empty: {
     borderWidth: 1,
     borderRadius: radii.md,
     padding: 24,
-    alignItems: "center",
+    alignItems: 'center',
     gap: 8,
     marginTop: 12,
   },
-  emptyText: { fontSize: 13, fontWeight: "600" },
+  emptyText: { fontSize: 13, fontWeight: '600' },
 });

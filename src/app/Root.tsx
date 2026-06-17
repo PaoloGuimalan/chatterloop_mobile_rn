@@ -27,6 +27,7 @@ import PageDetail from "./tabs/pages/PageDetail";
 import Conversation from "./tabs/messenger/Conversation";
 import NewPostModal from "./tabs/feed/NewPostModal";
 import Comments from "./tabs/feed/Comments";
+import PostDetail from "./tabs/feed/PostDetail";
 import Diary from "./tabs/profile/diary/Diary";
 import NewDiaryEntry from "./tabs/profile/diary/NewEntry";
 import DiaryEntryView from "./tabs/profile/diary/EntryView";
@@ -136,6 +137,7 @@ export default function Root() {
             <Stack.Screen name="Pages" component={Pages} />
             <Stack.Screen name="PageDetail" component={PageDetail} />
             <Stack.Screen name="Conversation" component={Conversation} />
+            <Stack.Screen name="PostDetail" component={PostDetail} />
             <Stack.Screen name="Comments" component={Comments} />
             <Stack.Screen name="Diary" component={Diary} />
             <Stack.Screen name="DiaryEntry" component={DiaryEntryView} />
