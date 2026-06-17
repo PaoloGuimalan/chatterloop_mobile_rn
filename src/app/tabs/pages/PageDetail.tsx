@@ -13,9 +13,10 @@
  * are deferred — they share infrastructure with the unported Feed
  * composer and post detail flows. */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState as RNAppState,
   FlatList,
   Image,
   Pressable,
@@ -23,6 +24,7 @@ import {
   StyleSheet,
   Text,
   View,
+  ViewToken,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -42,9 +44,11 @@ import {
   UnfollowRealmRequest,
 } from '../../../reusables/hooks/requests';
 import { useFeedReactions } from '../../../reusables/hooks/useFeedReactions';
+import { persistViewPost } from '../../../reusables/hooks/viewcache';
 
 interface PageDetailParams {
   realmID: string;
+  slug: string;
   name: string;
   profile?: string;
   cover?: string;
@@ -96,14 +100,14 @@ export default function PageDetail() {
 
   useEffect(() => {
     let cancelled = false;
-    GetProfileInfoRequest(params.realmID).then(info => {
+    GetProfileInfoRequest(params.slug).then(info => {
       if (cancelled || !info) return;
       setFollowing(!!info.is_follower);
     });
     return () => {
       cancelled = true;
     };
-  }, [params.realmID]);
+  }, [params.slug]);
 
   const {
     sortedEmojis,
@@ -113,6 +117,129 @@ export default function PageDetail() {
     onLongPressReaction,
     onPickFromPopover,
   } = useFeedReactions(posts, setPosts);
+
+  // Per-post view session timestamps — same pattern as Feed.tsx. The
+  // next GetPostRequest will ship the accumulated viewcache and drain
+  // it.
+  const viewStartRef = useRef<Map<string, number>>(new Map());
+
+  const closeViewSession = useCallback(
+    (post: FeedPost) => {
+      const started = viewStartRef.current.get(post.post_id);
+      if (!started) return;
+      viewStartRef.current.delete(post.post_id);
+      const duration = (Date.now() - started) / 1000;
+      if (duration <= 0) return;
+      persistViewPost(post.post_id, {
+        user_id: authentication.user.userID,
+        post_owner_id: post.user.id,
+        duration,
+        created_at: new Date(started).toISOString(),
+      });
+    },
+    [authentication.user.userID],
+  );
+
+  const viewabilityConfigRef = useRef({
+    itemVisiblePercentThreshold: 60,
+    minimumViewTime: 250,
+  });
+
+  const onViewableItemsChanged = useRef(
+    ({
+      viewableItems,
+      changed,
+    }: {
+      viewableItems: ViewToken[];
+      changed: ViewToken[];
+    }) => {
+      const me = authentication.user.userID;
+      changed.forEach(token => {
+        const post = token.item as FeedPost;
+        if (!post?.post_id) return;
+        if (post.user.username === me) return;
+        if (token.isViewable) {
+          if (!viewStartRef.current.has(post.post_id)) {
+            viewStartRef.current.set(post.post_id, Date.now());
+          }
+        } else {
+          closeViewSession(post);
+        }
+      });
+      viewableItems.forEach(token => {
+        const post = token.item as FeedPost;
+        if (!post?.post_id || post.user.username === me) return;
+        if (!viewStartRef.current.has(post.post_id)) {
+          viewStartRef.current.set(post.post_id, Date.now());
+        }
+      });
+    },
+  );
+
+  useEffect(() => {
+    onViewableItemsChanged.current = ({ viewableItems, changed }) => {
+      const me = authentication.user.userID;
+      changed.forEach(token => {
+        const post = token.item as FeedPost;
+        if (!post?.post_id || post.user.username === me) return;
+        if (token.isViewable) {
+          if (!viewStartRef.current.has(post.post_id)) {
+            viewStartRef.current.set(post.post_id, Date.now());
+          }
+        } else {
+          closeViewSession(post);
+        }
+      });
+      viewableItems.forEach(token => {
+        const post = token.item as FeedPost;
+        if (!post?.post_id || post.user.username === me) return;
+        if (!viewStartRef.current.has(post.post_id)) {
+          viewStartRef.current.set(post.post_id, Date.now());
+        }
+      });
+    };
+  }, [authentication.user.userID, closeViewSession]);
+
+  // Flush every open session when the screen tears down.
+  useEffect(() => {
+    const sessions = viewStartRef.current;
+    return () => {
+      const me = authentication.user.userID;
+      sessions.forEach((started, postID) => {
+        const duration = (Date.now() - started) / 1000;
+        if (duration <= 0) return;
+        persistViewPost(postID, {
+          user_id: me,
+          post_owner_id: '',
+          duration,
+          created_at: new Date(started).toISOString(),
+        });
+      });
+      sessions.clear();
+    };
+  }, [authentication.user.userID]);
+
+  // Same flush on OS background/inactive transitions so we don't lose
+  // durations for posts visible at suspend time.
+  useEffect(() => {
+    const sub = RNAppState.addEventListener('change', state => {
+      if (state !== 'background' && state !== 'inactive') return;
+      const me = authentication.user.userID;
+      const sessions = viewStartRef.current;
+      sessions.forEach((started, postID) => {
+        const duration = (Date.now() - started) / 1000;
+        if (duration <= 0) return;
+        persistViewPost(postID, {
+          user_id: me,
+          post_owner_id: '',
+          duration,
+          created_at: new Date(started).toISOString(),
+        });
+      });
+      sessions.clear();
+    });
+    return () => sub.remove();
+  }, [authentication.user.userID]);
 
   const load = useCallback(
     async (silent: boolean) => {
@@ -401,6 +528,8 @@ export default function PageDetail() {
           keyExtractor={(p, i) => p.post_id ?? `post-${i}`}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
+          viewabilityConfig={viewabilityConfigRef.current}
+          onViewableItemsChanged={info => onViewableItemsChanged.current(info)}
           ListHeaderComponent={ListHeader}
           ListEmptyComponent={
             <View

@@ -1095,9 +1095,13 @@ export const GetProfileInfoRequest = async (
       `${USER_SERVICE_API}/api/user/auth/${userID}/`,
       { headers: { 'x-access-token': token } },
     );
-    // Webapp uses response.data directly; the backend returns the
-    // realm/user object at the top level.
-    return (response.data ?? null) as RealmInfo | null;
+    // Backend wraps the realm/user payload one level deep —
+    // webapp accesses `response.data.data` (see ProfileContainer.tsx).
+    // The outer `data` is the axios response body; the inner `data`
+    // is the API envelope that actually carries is_follower / is_admin
+    // / etc. Fall back to `response.data` for tolerant shapes.
+    const payload = response.data?.data ?? response.data ?? null;
+    return payload as RealmInfo | null;
   } catch (err) {
     console.log('[GetProfileInfoRequest]', err);
     return null;
@@ -1181,6 +1185,33 @@ export interface ServerDetails {
   members?: unknown[];
   usersWithInfo?: ServerMember[];
 }
+
+export interface CreateServerPayload {
+  groupName: string;
+  privacy: boolean;
+  otherUsers: string[];
+}
+
+/** Webapp signs the payload then POSTs `/u/createserver`. The backend
+ *  returns `{ status: boolean }` — true means the server was created
+ *  and the new entry will appear on the next InitServerListRequest. */
+export const CreateServerRequest = async (
+  payload: CreateServerPayload,
+): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const encoded = sign(payload, SECRET);
+    const response = await Axios.post(
+      `${API}/u/createserver`,
+      { token: encoded },
+      { headers: { 'x-access-token': token } },
+    );
+    return response.data?.status === true;
+  } catch (err) {
+    console.log('[CreateServerRequest]', err);
+    return false;
+  }
+};
 
 export const InitServerListRequest = async (): Promise<ServerSummary[]> => {
   try {

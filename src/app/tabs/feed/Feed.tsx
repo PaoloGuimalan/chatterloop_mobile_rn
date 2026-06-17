@@ -19,6 +19,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState as RNAppState,
   FlatList,
   Image,
   Pressable,
@@ -199,6 +200,31 @@ export default function Feed() {
       });
       sessions.clear();
     };
+  }, [authentication.user.userID]);
+
+  // Same flush when the OS suspends the app — without this, durations
+  // for posts still on screen get lost between background and the
+  // next foreground (the viewportable items don't re-fire on resume).
+  // On foreground, onViewableItemsChanged re-opens sessions for items
+  // still on screen, so durations restart cleanly.
+  useEffect(() => {
+    const sub = RNAppState.addEventListener("change", state => {
+      if (state !== "background" && state !== "inactive") return;
+      const me = authentication.user.userID;
+      const sessions = viewStartRef.current;
+      sessions.forEach((started, postID) => {
+        const duration = (Date.now() - started) / 1000;
+        if (duration <= 0) return;
+        persistViewPost(postID, {
+          user_id: me,
+          post_owner_id: "",
+          duration,
+          created_at: new Date(started).toISOString(),
+        });
+      });
+      sessions.clear();
+    });
+    return () => sub.remove();
   }, [authentication.user.userID]);
 
   const load = useCallback(

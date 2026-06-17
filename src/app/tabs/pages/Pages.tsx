@@ -12,7 +12,7 @@
  *   - Create-page flow — webapp routes /pages/my-pages/create. Wire
  *     once the form is ported. */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -22,42 +22,39 @@ import {
   StyleSheet,
   Text,
   View,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 
-import { useTheme } from "../../../reusables/design/ThemeProvider";
-import { Btn, CLIcon } from "../../../reusables/design/primitives";
-import { radii } from "../../../reusables/design/tokens";
+import { useTheme } from '../../../reusables/design/ThemeProvider';
+import { Btn, CLIcon } from '../../../reusables/design/primitives';
+import { radii } from '../../../reusables/design/tokens';
 import {
   GetFollowRealmRequest,
   GetMyRealmsRequest,
   RealmProfileInfo,
-} from "../../../reusables/hooks/requests";
+} from '../../../reusables/hooks/requests';
 
-type PagesTab = "my" | "followed";
+type PagesTab = 'my' | 'followed';
 
 const RANGE = 10;
 
 export default function Pages() {
   const { palette } = useTheme();
   const navigation = useNavigation<any>();
-  const [tab, setTab] = useState<PagesTab>("my");
+  const [tab, setTab] = useState<PagesTab>('my');
   const [pages, setPages] = useState<RealmProfileInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(
-    async (which: PagesTab, silent: boolean) => {
-      if (!silent) setIsLoading(true);
-      const fetcher = which === "my" ? GetMyRealmsRequest : GetFollowRealmRequest;
-      const response = await fetcher(1, RANGE, "page");
-      setPages(response.results ?? []);
-      setIsLoading(false);
-      setRefreshing(false);
-    },
-    [],
-  );
+  const load = useCallback(async (which: PagesTab, silent: boolean) => {
+    if (!silent) setIsLoading(true);
+    const fetcher = which === 'my' ? GetMyRealmsRequest : GetFollowRealmRequest;
+    const response = await fetcher(1, RANGE, 'page');
+    setPages(response.results ?? []);
+    setIsLoading(false);
+    setRefreshing(false);
+  }, []);
 
   useEffect(() => {
     load(tab, false);
@@ -70,13 +67,14 @@ export default function Pages() {
 
   const renderItem = useCallback(
     ({ item }: { item: RealmProfileInfo }) => {
-      const hasAvatar = item.profile && item.profile !== "N/A";
+      const hasAvatar = item.profile && item.profile !== 'N/A';
       const initial = item.name.charAt(0).toUpperCase();
       return (
         <Pressable
           onPress={() =>
-            navigation.navigate("PageDetail", {
+            navigation.navigate('PageDetail', {
               realmID: item.id,
+              slug: item.slug,
               name: item.name,
               profile: item.profile,
               cover: (item as { cover?: string }).cover,
@@ -84,7 +82,7 @@ export default function Pages() {
               isVerified: (item as { is_verified?: boolean }).is_verified,
               // My-tab tiles are pages I own (no follow toggle); followed-tab
               // tiles are by definition already followed.
-              isFollowing: tab === "followed",
+              isFollowing: tab === 'followed',
             })
           }
           style={({ pressed }) => [
@@ -132,13 +130,13 @@ export default function Pages() {
   );
 
   const segments: { key: PagesTab; label: string }[] = [
-    { key: "my", label: "My Pages" },
-    { key: "followed", label: "Followed" },
+    { key: 'my', label: 'My Pages' },
+    { key: 'followed', label: 'Followed' },
   ];
 
   return (
     <SafeAreaView
-      edges={["top"]}
+      edges={['top']}
       style={[styles.screen, { backgroundColor: palette.bg }]}
     >
       <View style={styles.titleBar}>
@@ -148,7 +146,7 @@ export default function Pages() {
           <CLIcon n="auto-stories" size={18} color={palette.brand} />
         </View>
         <Text style={[styles.titleText, { color: palette.text }]}>Pages</Text>
-        {tab === "my" ? (
+        {tab === 'my' ? (
           <Btn
             size="sm"
             variant="soft"
@@ -159,10 +157,8 @@ export default function Pages() {
         ) : null}
       </View>
 
-      <View
-        style={[styles.segments, { backgroundColor: palette.surface2 }]}
-      >
-        {segments.map((s) => {
+      <View style={[styles.segments, { backgroundColor: palette.surface2 }]}>
+        {segments.map(s => {
           const active = tab === s.key;
           return (
             <Pressable
@@ -197,18 +193,18 @@ export default function Pages() {
         <View style={styles.center}>
           <CLIcon n="auto-stories" size={42} color={palette.text3} />
           <Text style={[styles.emptyText, { color: palette.text3 }]}>
-            {tab === "my" ? "No pages created yet" : "No followed pages"}
+            {tab === 'my' ? 'No pages created yet' : 'No followed pages'}
           </Text>
           <Text style={[styles.emptyHint, { color: palette.text3 }]}>
-            {tab === "my"
-              ? "Create your own page to start connecting through realms."
-              : "Follow pages from the explore feed to see them here."}
+            {tab === 'my'
+              ? 'Create your own page to start connecting through realms.'
+              : 'Follow pages from the explore feed to see them here.'}
           </Text>
         </View>
       ) : (
         <FlatList
           data={pages}
-          keyExtractor={(p) => p.id}
+          keyExtractor={p => p.id}
           renderItem={renderItem}
           numColumns={2}
           contentContainerStyle={styles.gridContent}
@@ -229,8 +225,8 @@ export default function Pages() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   titleBar: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 12,
@@ -240,17 +236,17 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: radii.sm,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   titleText: {
     fontSize: 22,
-    fontWeight: "800",
+    fontWeight: '800',
     letterSpacing: -0.4,
     flex: 1,
   },
   segments: {
-    flexDirection: "row",
+    flexDirection: 'row',
     marginHorizontal: 16,
     marginBottom: 12,
     padding: 4,
@@ -261,21 +257,21 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 8,
     borderRadius: radii.pill,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
-    borderColor: "transparent",
+    borderColor: 'transparent',
   },
-  segmentText: { fontSize: 13, fontWeight: "600" },
+  segmentText: { fontSize: 13, fontWeight: '600' },
   center: {
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
     paddingHorizontal: 32,
   },
-  emptyText: { fontSize: 14, fontWeight: "600" },
-  emptyHint: { fontSize: 12, textAlign: "center", lineHeight: 17 },
+  emptyText: { fontSize: 14, fontWeight: '600' },
+  emptyHint: { fontSize: 12, textAlign: 'center', lineHeight: 17 },
   gridContent: { paddingHorizontal: 12, paddingBottom: 32, gap: 12 },
   columnWrapper: { gap: 12 },
   tile: {
@@ -283,12 +279,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: radii.md,
     padding: 14,
-    alignItems: "center",
+    alignItems: 'center',
     gap: 8,
   },
   avatar: { width: 60, height: 60, borderRadius: radii.md },
-  avatarFallback: { alignItems: "center", justifyContent: "center" },
-  avatarInitial: { fontSize: 22, fontWeight: "800" },
-  tileName: { fontSize: 13, fontWeight: "700", textAlign: "center" },
-  tileDesc: { fontSize: 11, textAlign: "center", lineHeight: 14 },
+  avatarFallback: { alignItems: 'center', justifyContent: 'center' },
+  avatarInitial: { fontSize: 22, fontWeight: '800' },
+  tileName: { fontSize: 13, fontWeight: '700', textAlign: 'center' },
+  tileDesc: { fontSize: 11, textAlign: 'center', lineHeight: 14 },
 });

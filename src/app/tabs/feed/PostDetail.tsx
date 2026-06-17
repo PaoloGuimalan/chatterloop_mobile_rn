@@ -12,11 +12,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
   FlatList,
   Image,
   KeyboardAvoidingView,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -66,12 +70,17 @@ function countByType(
   return counts.find(c => c.count_type === type)?.count ?? 0;
 }
 
-function firstImageURI(post: FeedPost): string | undefined {
-  const ref = post.references?.find(r =>
-    (r.reference_media_type ?? '').includes('image'),
-  );
-  return ref?.reference;
+function allImageURIs(post: FeedPost): string[] {
+  return (post.references ?? [])
+    .filter(r => (r.reference_media_type ?? '').includes('image'))
+    .map(r => r.reference);
 }
+
+// Carousel page width = screen width minus the FlatList container
+// padding (14 each side) and the post card's inner padding (14 each
+// side). Kept in sync with `styles.listContent` + `styles.postCard`
+// below; if either padding changes, update here too.
+const CAROUSEL_WIDTH = Dimensions.get('window').width - 14 * 4;
 
 export default function PostDetail() {
   const { palette } = useTheme();
@@ -198,11 +207,25 @@ export default function PostDetail() {
   );
 
   const hasProfile = post?.user.profile && post.user.profile !== 'none';
-  const imageURI = post ? firstImageURI(post) : undefined;
+  const imageURIs = post ? allImageURIs(post) : [];
   const likes = post ? countByType(post.activity_counts, 'like') : 0;
   const commentsCount = post
     ? countByType(post.activity_counts, 'comment')
     : 0;
+
+  // Track the active dot in the carousel; recompute from the pager's
+  // contentOffset / page width so the indicator stays in sync without
+  // a separate gesture handler.
+  const [carouselIndex, setCarouselIndex] = useState(0);
+  const onCarouselScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const w = e.nativeEvent.layoutMeasurement.width;
+      if (!w) return;
+      const idx = Math.round(e.nativeEvent.contentOffset.x / w);
+      setCarouselIndex(idx);
+    },
+    [],
+  );
 
   const PostCard = post ? (
     <View style={styles.postCardWrap}>
@@ -255,12 +278,49 @@ export default function PostDetail() {
           </Text>
         ) : null}
 
-        {imageURI ? (
+        {imageURIs.length === 1 ? (
           <Image
-            source={{ uri: imageURI }}
+            source={{ uri: imageURIs[0] }}
             style={[styles.postMedia, { backgroundColor: palette.surface2 }]}
             resizeMode="cover"
           />
+        ) : imageURIs.length > 1 ? (
+          <View>
+            <ScrollView
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onScroll={onCarouselScroll}
+              scrollEventThrottle={32}
+              style={styles.carousel}
+            >
+              {imageURIs.map((uri, i) => (
+                <Image
+                  key={`${uri}-${i}`}
+                  source={{ uri }}
+                  style={[
+                    styles.carouselImage,
+                    { backgroundColor: palette.surface2 },
+                  ]}
+                  resizeMode="cover"
+                />
+              ))}
+            </ScrollView>
+            <View style={styles.carouselDots}>
+              {imageURIs.map((_, i) => (
+                <View
+                  key={i}
+                  style={[
+                    styles.carouselDot,
+                    {
+                      backgroundColor:
+                        i === carouselIndex ? palette.brand : palette.border2,
+                    },
+                  ]}
+                />
+              ))}
+            </View>
+          </View>
         ) : null}
 
         <View style={[styles.postActions, { borderTopColor: palette.border }]}>
@@ -511,6 +571,25 @@ const styles = StyleSheet.create({
     width: '100%',
     aspectRatio: 1.4,
     borderRadius: radii.sm,
+  },
+  carousel: {
+    borderRadius: radii.sm,
+    overflow: 'hidden',
+  },
+  carouselImage: {
+    width: CAROUSEL_WIDTH,
+    aspectRatio: 1.4,
+  },
+  carouselDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+  carouselDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
   },
   postActions: {
     flexDirection: 'row',

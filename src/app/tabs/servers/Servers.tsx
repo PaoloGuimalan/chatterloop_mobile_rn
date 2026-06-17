@@ -33,6 +33,7 @@ import {
   InitServerListRequest,
   ServerSummary,
 } from "../../../reusables/hooks/requests";
+import { CreateServerModal } from "./CreateServerModal";
 
 export default function Servers() {
   const { palette } = useTheme();
@@ -40,6 +41,7 @@ export default function Servers() {
   const [servers, setServers] = useState<ServerSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const load = useCallback(async (silent: boolean) => {
     if (!silent) setIsLoading(true);
@@ -124,7 +126,7 @@ export default function Servers() {
           variant="soft"
           iconL="add"
           label="New"
-          // TODO(create-server): port webapp/src/app/widgets/modals/CreateServerModal.tsx
+          onPress={() => setCreateOpen(true)}
         />
       </View>
 
@@ -159,6 +161,12 @@ export default function Servers() {
           }
         />
       )}
+
+      <CreateServerModal
+        visible={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => load(true)}
+      />
     </SafeAreaView>
   );
 }

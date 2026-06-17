@@ -1,3 +1,5 @@
+/* eslint-disable react-native/no-inline-styles */
+/* eslint-disable @typescript-eslint/no-shadow */
 /* Contacts tab — ports webapp/src/app/tabs/feed/Contacts.tsx.
  *
  * Reads `state.contactslist` which is fed both by an initial
@@ -13,7 +15,7 @@
  *   - Group / server contact rows. Webapp only renders the `single`
  *     variant here; mirroring that exactly. */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -22,21 +24,18 @@ import {
   StyleSheet,
   Text,
   View,
-} from "react-native";
-import { useDispatch, useSelector } from "react-redux";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+} from 'react-native';
+import { useDispatch, useSelector } from 'react-redux';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 
-import type { AppState } from "../../../redux/store";
-import { useTheme } from "../../../reusables/design/ThemeProvider";
-import { CLIcon, IconBtn } from "../../../reusables/design/primitives";
-import { radii } from "../../../reusables/design/tokens";
-import { isUserOnline } from "../../../reusables/hooks/reusable";
-import { ContactsListInitRequest } from "../../../reusables/hooks/requests";
-import {
-  IContact,
-  PaginationProp,
-} from "../../../reusables/vars/interfaces";
+import type { AppState } from '../../../redux/store';
+import { useTheme } from '../../../reusables/design/ThemeProvider';
+import { CLIcon, IconBtn } from '../../../reusables/design/primitives';
+import { radii } from '../../../reusables/design/tokens';
+import { isUserOnline } from '../../../reusables/hooks/reusable';
+import { ContactsListInitRequest } from '../../../reusables/hooks/requests';
+import { IContact, PaginationProp } from '../../../reusables/vars/interfaces';
 
 interface ContactRowData {
   id: string;
@@ -60,7 +59,10 @@ export default function Contacts() {
   const authentication = useSelector((s: AppState) => s.authentication);
   const activeuserslist = useSelector(
     (s: AppState) =>
-      s.activeuserslist as unknown as { _id: string; sessionStatus?: boolean }[],
+      s.activeuserslist as unknown as {
+        _id: string;
+        sessionStatus?: boolean;
+      }[],
   );
 
   const [isLoading, setIsLoading] = useState(true);
@@ -73,7 +75,7 @@ export default function Contacts() {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    ContactsListInitRequest(1, range, true, dispatch, (v) => {
+    ContactsListInitRequest(1, range, true, dispatch, v => {
       setRefreshing(v);
       setIsLoading(v);
     });
@@ -81,8 +83,8 @@ export default function Contacts() {
 
   const me = authentication.user.userID;
   const rows: ContactRowData[] = useMemo(() => {
-    return (contacts.results ?? []).flatMap((c) => {
-      if (c.type !== "single") return [];
+    return (contacts.results ?? []).flatMap(c => {
+      if (c.type !== 'single') return [];
       if (!c.involved_user || !c.action_by) return [];
       const selfActed = c.action_by.id === me;
       const u = selfActed ? c.involved_user : c.action_by;
@@ -105,20 +107,17 @@ export default function Contacts() {
     ({ item }: { item: ContactRowData }) => {
       const online = isUserOnline(activeuserslist, item.id);
       const middle =
-        item.middleName && item.middleName !== "N/A"
+        item.middleName && item.middleName !== 'N/A'
           ? ` ${item.middleName}`
-          : "";
+          : '';
       const name = `${item.firstName}${middle} ${item.lastName}`;
-      const hasProfile = item.profile && item.profile !== "none";
+      const hasProfile = item.profile && item.profile !== 'none';
 
       return (
         <View style={styles.row}>
           <View style={styles.avatarWrap}>
             {hasProfile ? (
-              <Image
-                source={{ uri: item.profile }}
-                style={styles.avatar}
-              />
+              <Image source={{ uri: item.profile }} style={styles.avatar} />
             ) : (
               <View
                 style={[
@@ -157,7 +156,7 @@ export default function Contacts() {
               ) : null}
             </View>
             <Text style={[styles.status, { color: palette.text3 }]}>
-              {online ? "Active now" : `@${item.username}`}
+              {online ? 'Active now' : `@${item.username}`}
             </Text>
           </View>
           <View style={styles.actions}>
@@ -170,25 +169,25 @@ export default function Contacts() {
                 // For 1:1 contacts the connection_id doubles as the
                 // conversationID, mirroring the webapp's navigateToConversation.
                 const middle =
-                  item.middleName && item.middleName !== "N/A"
+                  item.middleName && item.middleName !== 'N/A'
                     ? ` ${item.middleName}`
-                    : "";
-                navigation.navigate("Conversation", {
+                    : '';
+                navigation.navigate('Conversation', {
                   conversationID: item.connectionID,
-                  type: "single",
+                  type: 'single',
                   title: `${item.firstName}${middle} ${item.lastName}`,
                   profile: hasProfile ? item.profile : undefined,
                   receivers: [item.id],
                 });
               }}
             />
-            <IconBtn
+            {/* <IconBtn
               n="person_remove"
               iconSize={20}
               color={palette.pink}
               style={{ backgroundColor: palette.surface2 }}
-              // TODO(remove): wire DeclineContactRequest once backend re-adds.
-            />
+              // TODO(remove): wire DeclineContactRequest once backend re-adds, do not continue this, we focus on unfriend button displayed on their profiles.
+            /> */}
           </View>
         </View>
       );
@@ -200,11 +199,13 @@ export default function Contacts() {
 
   return (
     <SafeAreaView
-      edges={["top"]}
+      edges={['top']}
       style={[styles.screen, { backgroundColor: palette.bg }]}
     >
       <View style={styles.titleBar}>
-        <View style={[styles.titleIcon, { backgroundColor: palette.greenSoft }]}>
+        <View
+          style={[styles.titleIcon, { backgroundColor: palette.greenSoft }]}
+        >
           <CLIcon n="contacts" size={18} color={palette.green} />
         </View>
         <View style={{ flex: 1 }}>
@@ -215,7 +216,9 @@ export default function Contacts() {
             Manage your connections.
           </Text>
         </View>
-        <View style={[styles.countPill, { backgroundColor: palette.greenSoft }]}>
+        <View
+          style={[styles.countPill, { backgroundColor: palette.greenSoft }]}
+        >
           <Text style={[styles.countText, { color: palette.green }]}>
             {rows.length}
           </Text>
@@ -236,7 +239,7 @@ export default function Contacts() {
       ) : (
         <FlatList
           data={rows}
-          keyExtractor={(item) => item.id}
+          keyExtractor={item => item.id}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           refreshControl={
@@ -255,8 +258,8 @@ export default function Contacts() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   titleBar: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 12,
@@ -266,12 +269,12 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: radii.sm,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   titleText: {
     fontSize: 22,
-    fontWeight: "800",
+    fontWeight: '800',
     letterSpacing: -0.4,
   },
   subtitleText: { fontSize: 12, marginTop: 2 },
@@ -280,31 +283,31 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: radii.pill,
     paddingHorizontal: 10,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  countText: { fontSize: 12, fontWeight: "700" },
+  countText: { fontSize: 12, fontWeight: '700' },
   center: {
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
   },
-  emptyText: { fontSize: 14, fontWeight: "600" },
+  emptyText: { fontSize: 14, fontWeight: '600' },
   listContent: { paddingHorizontal: 8, paddingVertical: 4 },
   row: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
     padding: 12,
     borderRadius: radii.md,
   },
-  avatarWrap: { position: "relative" },
+  avatarWrap: { position: 'relative' },
   avatar: { width: 46, height: 46, borderRadius: radii.pill },
-  avatarFallback: { alignItems: "center", justifyContent: "center" },
-  avatarInitial: { fontWeight: "700", fontSize: 16 },
+  avatarFallback: { alignItems: 'center', justifyContent: 'center' },
+  avatarInitial: { fontWeight: '700', fontSize: 16 },
   onlineDot: {
-    position: "absolute",
+    position: 'absolute',
     right: 0,
     bottom: 0,
     width: 12,
@@ -314,14 +317,14 @@ const styles = StyleSheet.create({
   },
   body: { flex: 1, minWidth: 0 },
   nameRow: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 5,
   },
-  name: { fontSize: 14, fontWeight: "700", flexShrink: 1 },
+  name: { fontSize: 14, fontWeight: '700', flexShrink: 1 },
   status: { fontSize: 12, marginTop: 2 },
   actions: {
-    flexDirection: "row",
+    flexDirection: 'row',
     gap: 6,
   },
 });
