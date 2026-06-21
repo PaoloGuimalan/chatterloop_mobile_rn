@@ -1186,6 +1186,86 @@ export interface ServerDetails {
   usersWithInfo?: ServerMember[];
 }
 
+/** Multipart-upload file ref shaped for React Native's FormData.
+ *  RN's FormData wants `{ uri, type, name }`; the cast inside the
+ *  request keeps the rest of the codebase free of any-casts. */
+export interface UploadFile {
+  uri: string;
+  type: string;
+  name: string;
+}
+
+export interface CreatePagePayload {
+  pageName: string;
+  pageDescription: string;
+  email: string;
+  slug: string;
+  /** UserIDs added as page admins. */
+  otherUsers: string[];
+  profile: UploadFile;
+  cover_photo: UploadFile;
+}
+
+/** Webapp uses multipart/form-data — POST `/u/createpage`. The slug
+ *  acts as the realm's URL handle and must be unique. */
+export const CreatePageRequest = async (
+  payload: CreatePagePayload,
+): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const form = new FormData();
+    form.append('pageName', payload.pageName);
+    form.append('pageDescription', payload.pageDescription);
+    form.append('email', payload.email);
+    form.append('slug', payload.slug);
+    form.append('otherUsers', JSON.stringify(payload.otherUsers));
+    // RN FormData expects { uri, type, name } objects for files; the
+    // cast is the documented escape hatch for fetch/axios multipart.
+    form.append('profile', payload.profile as unknown as Blob);
+    form.append('cover_photo', payload.cover_photo as unknown as Blob);
+    const response = await Axios.post(`${API}/u/createpage`, form, {
+      headers: {
+        'x-access-token': token,
+        // Let axios+RN set the multipart boundary automatically by
+        // not setting Content-Type explicitly.
+      },
+    });
+    return response.data?.status === true;
+  } catch (err) {
+    console.log('[CreatePageRequest]', err);
+    return false;
+  }
+};
+
+export interface CreateChannelPayload {
+  serverID: string;
+  groupName: string;
+  privacy: boolean;
+  /** Webapp uses 'text' | 'voice' | 'location'. Voice and location
+   *  channels also create the corresponding socket room; for the
+   *  native port only 'text' is interactive today. */
+  type: 'text' | 'voice' | 'location';
+  otherUsers: string[];
+}
+
+export const CreateChannelRequest = async (
+  payload: CreateChannelPayload,
+): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const encoded = sign(payload, SECRET);
+    const response = await Axios.post(
+      `${API}/u/createchannel`,
+      { token: encoded },
+      { headers: { 'x-access-token': token } },
+    );
+    return response.data?.status === true;
+  } catch (err) {
+    console.log('[CreateChannelRequest]', err);
+    return false;
+  }
+};
+
 export interface CreateServerPayload {
   groupName: string;
   privacy: boolean;
@@ -1242,10 +1322,10 @@ export const InitServerChannelsRequest = async (
       { headers: { 'x-access-token': token } },
     );
     if (response.data?.status) {
-      const decoded: { data: ServerDetails[] } = jwtDecode(
+      const decoded: { data: { data: ServerDetails[] } } = jwtDecode(
         response.data.result,
       );
-      return decoded.data?.[0] ?? null;
+      return decoded.data?.data?.[0] ?? null;
     }
     return null;
   } catch (err) {

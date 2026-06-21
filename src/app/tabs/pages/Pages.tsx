@@ -34,6 +34,7 @@ import {
   GetMyRealmsRequest,
   RealmProfileInfo,
 } from '../../../reusables/hooks/requests';
+import { CreatePageModal } from './CreatePageModal';
 
 type PagesTab = 'my' | 'followed';
 
@@ -46,6 +47,7 @@ export default function Pages() {
   const [pages, setPages] = useState<RealmProfileInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const load = useCallback(async (which: PagesTab, silent: boolean) => {
     if (!silent) setIsLoading(true);
@@ -152,7 +154,7 @@ export default function Pages() {
             variant="soft"
             iconL="add"
             label="Create"
-            // TODO(create-page): wire to create-page form once ported.
+            onPress={() => setCreateOpen(true)}
           />
         ) : null}
       </View>
@@ -218,6 +220,17 @@ export default function Pages() {
           }
         />
       )}
+
+      <CreatePageModal
+        visible={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => {
+          // Surface the new page on the "My Pages" tab even if the
+          // user was browsing "Followed" when they tapped Create.
+          setTab('my');
+          load('my', true);
+        }}
+      />
     </SafeAreaView>
   );
 }

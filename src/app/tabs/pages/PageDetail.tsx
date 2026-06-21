@@ -246,7 +246,7 @@ export default function PageDetail() {
       if (!silent) setIsLoading(true);
       const response = await GetPostRequest({
         current_user_id: authentication.user.userID,
-        userID: params.realmID,
+        userID: params.slug,
         page: 1,
         range: RANGE,
         archive: false,
@@ -255,7 +255,7 @@ export default function PageDetail() {
       setIsLoading(false);
       setRefreshing(false);
     },
-    [authentication.user.userID, params.realmID],
+    [authentication.user.userID, params.slug],
   );
 
   useEffect(() => {

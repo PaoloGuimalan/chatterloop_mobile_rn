@@ -177,7 +177,7 @@ export default function Profile() {
       if (!silent) setIsLoading(true);
       const response = await GetPostRequest({
         current_user_id: user.userID,
-        userID: user.userID,
+        userID: user.username,
         page: 1,
         range: RANGE,
       });
@@ -185,7 +185,7 @@ export default function Profile() {
       setIsLoading(false);
       setRefreshing(false);
     },
-    [user.userID],
+    [user.userID, user.username],
   );
 
   useEffect(() => {

@@ -16,6 +16,12 @@ export interface PickedMedia {
   /** "image" | "video" — coarse bucket used by the messenger flow. */
   type: 'image' | 'video';
   name: string;
+  /** Raw file URI (file:// or content://). Use this when uploading
+   *  via FormData multipart — the `base` data URL is for endpoints
+   *  that accept base64 inline. */
+  uri?: string;
+  /** Full MIME (e.g. "image/jpeg"). Pairs with `uri` for FormData. */
+  mime?: string;
 }
 
 interface PickOptions {
@@ -34,6 +40,8 @@ function assetToPicked(a: Asset): PickedMedia | null {
     base: `data:${a.type};base64,${a.base64}`,
     type: bucket,
     name: a.fileName ?? `${bucket}_${Date.now()}`,
+    uri: a.uri,
+    mime: a.type,
   };
 }
 
