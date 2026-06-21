@@ -1,10 +1,9 @@
 /* Settings tab — ports webapp/src/app/tabs/settings/Settings.tsx.
  *
  * Master/detail shell with the same three categories (Account /
- * Messages / Location) and the same item set. Each item routes to a
- * detail placeholder until the corresponding section component is
- * ported — see the matching TODO(section:*) markers below for the
- * webapp source paths to mirror.
+ * Messages / Location) and the same item set. Each enabled item routes
+ * to its section component under ./section/*; disabled items
+ * ("Privacy", "Restricted") fall through to a placeholder.
  *
  * On mobile the detail view fills the screen; a back chevron returns
  * to the list. (Desktop's side-by-side layout doesn't apply on RN.) */
@@ -33,7 +32,7 @@ interface SettingsItem {
   name: string;
   description: string;
   isDisabled: boolean;
-  /** Webapp source path for the section's content — see TODO(section:*). */
+  /** Webapp source the section mirrors — null for disabled items. */
   source: string | null;
 }
 
@@ -61,7 +60,6 @@ export default function Settings() {
             description:
               "Change your name, birthdate, address, and your other public info.",
             isDisabled: false,
-            // TODO(section:personal): port webapp/src/app/tabs/settings/section/PersonalInformation.tsx
             source: "webapp/src/app/tabs/settings/section/PersonalInformation.tsx",
           },
           {
@@ -70,7 +68,6 @@ export default function Settings() {
             name: "Credentials",
             description: "Setup or update your account credentials.",
             isDisabled: false,
-            // TODO(section:credentials): port webapp/src/app/tabs/settings/section/Credentials.tsx
             source: "webapp/src/app/tabs/settings/section/Credentials.tsx",
           },
           {
@@ -95,7 +92,6 @@ export default function Settings() {
             description:
               "Check your archived messages and revisit conversations.",
             isDisabled: false,
-            // TODO(section:archives): port webapp/src/app/tabs/settings/section/ArchivedMessages.tsx
             source: "webapp/src/app/tabs/settings/section/ArchivedMessages.tsx",
           },
           {
@@ -120,7 +116,6 @@ export default function Settings() {
             description:
               "Change how Map Feed uses or displays your location.",
             isDisabled: false,
-            // TODO(section:map): port webapp/src/app/tabs/settings/section/MapFeedSettings.tsx
             source: "webapp/src/app/tabs/settings/section/MapFeedSettings.tsx",
           },
         ],

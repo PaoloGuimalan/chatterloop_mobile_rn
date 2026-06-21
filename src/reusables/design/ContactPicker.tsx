@@ -45,6 +45,14 @@ interface BaseProps {
   onClose: () => void;
   /** Header label; defaults to "Pick contacts" / "Pick a contact". */
   title?: string;
+  /** Optional override for the candidate pool. When omitted, falls back
+   *  to the redux contactslist (the default behavior). Callers like
+   *  CreateChannelModal use this to scope the picker to a server's
+   *  existing roster instead of the user's full contact graph. */
+  source?: ContactPickerItem[];
+  /** Empty-state copy when `source` yields no items and there's no
+   *  search term active. Defaults to "No contacts yet". */
+  emptyLabel?: string;
 }
 
 type Props = BaseProps &
@@ -98,7 +106,10 @@ export function ContactPicker(props: Props) {
 
   const [search, setSearch] = useState('');
 
-  const items = useMemo(() => contactsToItems(contacts, me), [contacts, me]);
+  const items = useMemo(
+    () => props.source ?? contactsToItems(contacts, me),
+    [contacts, me, props.source],
+  );
 
   const selectedIds = useMemo(() => {
     if (props.mode === 'multi') {
@@ -260,7 +271,7 @@ export function ContactPicker(props: Props) {
           ListEmptyComponent={
             <View style={styles.empty}>
               <Text style={[styles.emptyText, { color: palette.text3 }]}>
-                {search ? 'No matches' : 'No contacts yet'}
+                {search ? 'No matches' : props.emptyLabel ?? 'No contacts yet'}
               </Text>
             </View>
           }

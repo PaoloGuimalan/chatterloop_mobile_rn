@@ -17,7 +17,9 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSelector } from 'react-redux';
 
+import type { AppState } from '../../../redux/store';
 import { useTheme } from '../../../reusables/design/ThemeProvider';
 import { CLIcon, IconBtn } from '../../../reusables/design/primitives';
 import {
@@ -68,6 +70,9 @@ export function CreateChannelModal({
   serverMembers,
 }: Props) {
   const { palette } = useTheme();
+  const myUserID = useSelector(
+    (s: AppState) => s.authentication.user.userID,
+  );
 
   const [name, setName] = useState('');
   const [kind, setKind] = useState<ChannelKind>('text');
@@ -76,15 +81,22 @@ export function CreateChannelModal({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // The picker reads contactslist from redux by default. The webapp
-  // narrows here to existing server members; the native ContactPicker
-  // doesn't yet accept a source override, so we just render the
-  // chip-summary inline and let the user pick from the global list.
-  // (Filtering at submit time is the simpler correct path — see
-  // memberIDs below.)
-  const serverMemberIDs = useMemo(
-    () => new Set(serverMembers.map(m => m._id)),
-    [serverMembers],
+  // Scope the picker to the server's existing roster (mirrors webapp's
+  // servermemberslist-driven picker). Drop the current user so the
+  // creator can't pick themselves as an invitee.
+  const pickerSource = useMemo<ContactPickerItem[]>(
+    () =>
+      serverMembers
+        .filter(m => m._id !== myUserID)
+        .map(m => ({
+          id: m._id,
+          username: m.userID ?? '',
+          firstName: m.fullname?.firstName ?? '',
+          middleName: m.fullname?.middleName ?? null,
+          lastName: m.fullname?.lastName ?? '',
+          profile: m.profile ?? 'none',
+        })),
+    [serverMembers, myUserID],
   );
 
   const reset = useCallback(() => {
@@ -97,18 +109,12 @@ export function CreateChannelModal({
   const onSubmit = useCallback(async () => {
     if (!name.trim() || saving) return;
     setSaving(true);
-    // Only forward picks that are already on the server roster — the
-    // backend would reject foreign IDs anyway, and this matches the
-    // webapp where the picker is scoped to servermemberslist.
-    const filtered = members
-      .map(m => m.id)
-      .filter(id => serverMemberIDs.has(id));
     const ok = await CreateChannelRequest({
       serverID,
       groupName: name.trim(),
       privacy: isPrivate,
       type: kind,
-      otherUsers: filtered,
+      otherUsers: members.map(m => m.id),
     });
     setSaving(false);
     if (ok) {
@@ -126,7 +132,6 @@ export function CreateChannelModal({
     reset,
     saving,
     serverID,
-    serverMemberIDs,
   ]);
 
   const canSubmit = name.trim().length > 0 && !saving;
@@ -318,6 +323,8 @@ export function CreateChannelModal({
           onChange={setMembers}
           onClose={() => setPickerOpen(false)}
           title="Pick members"
+          source={pickerSource}
+          emptyLabel="No other members in this server yet"
         />
       </SafeAreaView>
     </Modal>

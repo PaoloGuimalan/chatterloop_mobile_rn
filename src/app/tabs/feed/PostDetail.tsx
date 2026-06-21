@@ -9,7 +9,7 @@
  * UI. The reaction handling is shared via useFeedReactions so the heart
  * stays consistent with the rest of the app. */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -27,7 +27,11 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import {
+  useFocusEffect,
+  useNavigation,
+  useRoute,
+} from '@react-navigation/native';
 import { useSelector } from 'react-redux';
 
 import type { AppState } from '../../../redux/store';
@@ -45,6 +49,7 @@ import {
 } from '../../../reusables/hooks/requests';
 import { pickImages } from '../../../reusables/hooks/imagePicker';
 import { useFeedReactions } from '../../../reusables/hooks/useFeedReactions';
+import { persistViewPost } from '../../../reusables/hooks/viewcache';
 import { CommentRow } from './CommentRow';
 
 interface PostDetailParams {
@@ -147,6 +152,36 @@ export default function PostDetail() {
   useEffect(() => {
     loadComments(1, false);
   }, [loadComments]);
+
+  // Single-post viewport telemetry. Mirrors Feed/PageDetail: count the
+  // wall-clock time the screen is focused, gate on the post not being
+  // the viewer's own, and fire-and-forget into the persistent cache so
+  // a single-post fetch (which doesn't ship viewcache itself) still
+  // contributes to the next paginate's de-dupe set.
+  const postRef = useRef<FeedPost | null>(post ?? null);
+  useEffect(() => {
+    postRef.current = post ?? null;
+  }, [post]);
+  const myUsername = authentication.user.username;
+  const myUserID = authentication.user.userID;
+  useFocusEffect(
+    useCallback(() => {
+      const start = Date.now();
+      return () => {
+        const p = postRef.current;
+        if (!p) return;
+        if (p.user.username === myUsername) return;
+        const duration = (Date.now() - start) / 1000;
+        if (duration <= 0) return;
+        persistViewPost(p.post_id, {
+          user_id: myUserID,
+          post_owner_id: p.user.id,
+          duration,
+          created_at: new Date(start).toISOString(),
+        });
+      };
+    }, [myUserID, myUsername]),
+  );
 
   const onEndReached = useCallback(() => {
     if (loadingMore || !next) return;

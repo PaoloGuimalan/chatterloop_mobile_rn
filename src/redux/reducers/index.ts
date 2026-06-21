@@ -12,6 +12,7 @@ import {
   SET_AUTHENTICATION,
   SET_CLEAR_ALERTS,
   CLEAR_PENDING_CALL_ALERTS,
+  REMOVE_PENDING_CALL_ALERTS,
   SET_CALLS_LIST,
   SET_CONTACTS_LIST,
   SET_CONTACTS_LIST_OVERRIDE,
@@ -33,6 +34,7 @@ import {
   SET_PREVIEW_PARTICIPANTS_BULK,
   SET_RAW_COORDINATES,
   SET_REJECTED_CALL_LIST,
+  REMOVE_REJECTED_CALL_LIST,
   SET_REMOVE_IS_TYPING_LIST,
   SET_SCREEN_SIZE_LISTENER,
   SET_TOGGLE_RIGHT_WIDGET,
@@ -48,10 +50,26 @@ import {
 } from '../actions/states';
 import { AuthenticationInterface } from '../../reusables/vars/interfaces';
 
-interface Alert {
+export interface CallMetadata {
+  conversationID: string;
+  conversationType?: string;
+  callType?: 'audio' | 'video' | string;
+  caller?: {
+    firstName?: string;
+    lastName?: string;
+    profile?: string;
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+}
+
+export interface Alert {
   id: number;
-  type: 'success' | 'info' | 'warning' | 'error';
+  type: 'success' | 'info' | 'warning' | 'error' | 'incomingcall';
   content: string;
+  /** Present only when `type === 'incomingcall'` — carries the caller
+   *  + conversation refs the IncomingCallModal needs. */
+  callmetadata?: CallMetadata;
 }
 
 interface Action<P = unknown> {
@@ -296,11 +314,14 @@ interface CallAlert {
 
 const setpendingcallalerts = (
   state: CallAlert[] = [],
-  action: Action<{ pendingcallalerts: CallAlert }>,
+  action: Action<{ pendingcallalerts?: CallAlert; callID?: string }>,
 ): CallAlert[] => {
   switch (action.type) {
     case SET_PENDING_CALL_ALERTS:
+      if (!action.payload.pendingcallalerts) return state;
       return [...state, action.payload.pendingcallalerts];
+    case REMOVE_PENDING_CALL_ALERTS:
+      return state.filter(a => a.callID !== action.payload.callID);
     case CLEAR_PENDING_CALL_ALERTS:
       return [];
     default:
@@ -315,6 +336,8 @@ const setrejectedcalllist = (
   switch (action.type) {
     case SET_REJECTED_CALL_LIST:
       return [...state, action.payload.callID];
+    case REMOVE_REJECTED_CALL_LIST:
+      return state.filter(id => id !== action.payload.callID);
     default:
       return state;
   }

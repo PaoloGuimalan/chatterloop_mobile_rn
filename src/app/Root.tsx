@@ -42,6 +42,7 @@ import {
   CloseSSENotifications,
   SSENotificationsTRequest,
 } from "../reusables/hooks/sse";
+import { endSocket, socketInit } from "../reusables/hooks/sockets";
 import { useTheme } from "../reusables/design/ThemeProvider";
 import { loadUserSettings } from "../reusables/hooks/usersettings";
 import {
@@ -74,6 +75,10 @@ export default function Root() {
   useEffect(() => {
     if (!fullyAuthed) return;
     SSENotificationsTRequest(dispatch, alerts, authentication);
+    // Call signaling socket — lazy-connects on first emit, but we open
+    // it eagerly here so the WebSocket handshake is already done by
+    // the time an outbound CallRequest fires.
+    socketInit();
     ActiveContactsRequest(dispatch);
     // Emoji catalog rarely changes — fetch once per session.
     GetFeedEmojisRequest().then((emojilist) => {
@@ -85,6 +90,7 @@ export default function Root() {
     });
     return () => {
       CloseSSENotifications();
+      endSocket();
     };
     // We intentionally only re-run when fullyAuthed flips — re-subscribing
     // on every alert change would tear down the SSE connection.

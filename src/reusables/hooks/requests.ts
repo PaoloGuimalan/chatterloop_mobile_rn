@@ -31,7 +31,7 @@ const SECRET = envs.SECRET;
 
 interface AlertEntry {
   id: number;
-  type: 'success' | 'info' | 'warning' | 'error';
+  type: 'success' | 'info' | 'warning' | 'error' | 'incomingcall';
   content: string;
 }
 
@@ -452,6 +452,55 @@ export const AcceptContactRequest = async (
     } else {
       pushAlert(dispatch, currentAlertState, 'warning', response.data.message);
     }
+  } catch (err: any) {
+    pushAlert(
+      dispatch,
+      currentAlertState,
+      'error',
+      err?.message ?? 'Request failed.',
+    );
+  } finally {
+    setisDisabledByRequest(false);
+  }
+};
+
+// ---- DeclineContactRequest -------------------------------------------------
+
+/** DELETE /api/user/contacts — drives decline of an incoming request,
+ *  remove of an existing contact, and cancel of an outgoing request.
+ *  `action` is sent as a header per the webapp contract: "decline" |
+ *  "remove" | "cancel" (cancel maps to "remove" backend-side). */
+export const DeclineContactRequest = async (
+  params: {
+    connection_id: string;
+    to_user_id: string;
+    action: 'decline' | 'remove' | 'cancel';
+  },
+  dispatch: Dispatch<any>,
+  currentAlertState: AlertEntry[],
+  setisDisabledByRequest: (v: boolean) => void,
+) => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.delete(
+      `${USER_SERVICE_API}/api/user/contacts`,
+      {
+        headers: {
+          'x-access-token': token,
+          action: params.action,
+        },
+        data: {
+          connection_id: params.connection_id,
+          to_user_id: params.to_user_id,
+        },
+      },
+    );
+    pushAlert(
+      dispatch,
+      currentAlertState,
+      'success',
+      response.data?.message ?? 'Request declined.',
+    );
   } catch (err: any) {
     pushAlert(
       dispatch,
@@ -1751,13 +1800,72 @@ export const ActiveContactsRequest = async (dispatch: Dispatch<any>) => {
   }
 };
 
+// ---- Call signaling helpers -----------------------------------------------
+
+/** Caller-side: tell the backend to fan out an `incomingcall` push to
+ *  every receiver. Body is JWT-signed per webapp's contract. */
+export const CallRequest = async (params: {
+  conversationType: string;
+  conversationID: string;
+  callType: 'audio' | 'video';
+  receivers: string[];
+}): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const encoded = sign(params, SECRET);
+    const response = await Axios.post(
+      `${API}/u/call`,
+      { token: encoded },
+      { headers: { 'x-access-token': token } },
+    );
+    return Boolean(response.data?.status);
+  } catch (err) {
+    console.log('[CallRequest]', err);
+    return false;
+  }
+};
+
+/** Callee-side: tell the backend to fan out a `callreject` push so the
+ *  caller's UI dismisses the ringing modal. */
+export const RejectCallRequest = async (params: {
+  conversationType?: string;
+  conversationID: string;
+  caller?: unknown;
+}): Promise<void> => {
+  try {
+    const token = await getItem('authtoken');
+    const encoded = sign(params, SECRET);
+    await Axios.post(
+      `${API}/u/rejectcall`,
+      { token: encoded },
+      { headers: { 'x-access-token': token } },
+    );
+  } catch (err) {
+    console.log('[RejectCallRequest]', err);
+  }
+};
+
+/** Caller- or callee-side: tell the backend the call session is over so
+ *  it can broadcast `endcall` to the other side(s). */
+export const EndCallRequest = async (params: {
+  conversationID: string;
+  [k: string]: unknown;
+}): Promise<void> => {
+  try {
+    const token = await getItem('authtoken');
+    const encoded = sign(params, SECRET);
+    await Axios.post(
+      `${API}/u/endcall`,
+      { token: encoded },
+      { headers: { 'x-access-token': token } },
+    );
+  } catch (err) {
+    console.log('[EndCallRequest]', err);
+  }
+};
+
 // ---- TODOs to port later ---------------------------------------------------
-// - GetFeedRequest / CreatePostRequest / ReactionSaveRequest
-// - InitConversationListRequest / SendMessageRequest / SeenMessageRequest
-// - NotificationInitRequest / ReadNotificationsRequest
-// - ContactsListInitRequest / ContactRequest / DeclineContactRequest / AcceptContactRequest
-// - InitServerListRequest / CreateServerRequest / etc.
-// - CallRequest / VoiceRequest / RejectCallRequest / EndCallRequest
+// - VoiceRequest (server voice-channel join notify — needs ActiveCallScreen)
 //
 // Each one is a near-mechanical port:
 //   1. Read the webapp implementation (src/reusables/hooks/requests.ts).

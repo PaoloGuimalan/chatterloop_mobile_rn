@@ -40,6 +40,7 @@ import {
   SET_NOTIFICATIONS_LIST_OVERRIDE,
 } from '../../redux/types';
 import { CloseSSENotifications } from '../../reusables/hooks/sse';
+import IncomingCallModal from '../absolutes/IncomingCallModal';
 
 const Tab = createBottomTabNavigator();
 
@@ -189,6 +190,7 @@ export default function Shell() {
         <Tab.Screen name="Contacts" component={Contacts} />
         <Tab.Screen name="Profile" component={Profile} />
       </Tab.Navigator>
+      <IncomingCallModal />
     </View>
   );
 }

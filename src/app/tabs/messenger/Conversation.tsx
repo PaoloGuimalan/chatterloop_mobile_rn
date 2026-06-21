@@ -34,14 +34,20 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 
 import type { AppState } from '../../../redux/store';
+import {
+  REMOVE_REJECTED_CALL_LIST,
+  SET_ALERTS,
+} from '../../../redux/types';
 import { useTheme } from '../../../reusables/design/ThemeProvider';
 import { CLIcon, IconBtn } from '../../../reusables/design/primitives';
 import { radii } from '../../../reusables/design/tokens';
 import { timeSince } from '../../../reusables/hooks/reusable';
 import {
+  CallRequest,
+  EndCallRequest,
   InitConversationRequest,
   IsTypingBroadcastRequest,
   SeenMessageRequest,
@@ -51,6 +57,7 @@ import {
 } from '../../../reusables/hooks/requests';
 import { pickImages } from '../../../reusables/hooks/imagePicker';
 import { generateUUID } from '../../../reusables/hooks/uuid';
+import { ConversationInfoModal } from './ConversationInfoModal';
 
 interface ConversationParams {
   conversationID: string;
@@ -135,6 +142,8 @@ export default function Conversation() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const params = route.params as ConversationParams;
+  const dispatch = useDispatch();
+  const alerts = useSelector((s: AppState) => s.alerts);
   const authentication = useSelector((s: AppState) => s.authentication);
   const me = authentication.user.userID;
   const istypinglist = useSelector(
@@ -150,6 +159,17 @@ export default function Conversation() {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [attaching, setAttaching] = useState(false);
+  const [dialing, setDialing] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  // Set when an outbound call is ringing. Drives the inline
+  // OutgoingCallModal at the bottom of this screen.
+  const [outgoing, setOutgoing] = useState<{
+    callType: 'audio' | 'video';
+    startedAt: number;
+  } | null>(null);
+  const rejectedcalls = useSelector(
+    (s: AppState) => s.rejectedcalllist as string[],
+  );
   // Pagination state. `page` is the latest page we've successfully fetched
   // (1-indexed). `total` is the server's reported message count — once
   // we've loaded enough messages to cover it, we stop firing onEndReached.
@@ -422,6 +442,109 @@ export default function Conversation() {
     setAttaching(false);
   }, [attaching, params.conversationID, params.receivers, params.type]);
 
+  const onStartCall = useCallback(async () => {
+    if (dialing || outgoing) return;
+    if (params.receivers.length === 0) {
+      dispatch({
+        type: SET_ALERTS,
+        payload: {
+          alerts: {
+            id: alerts.length,
+            type: 'warning',
+            content: 'No one to call in this conversation.',
+          },
+        },
+      });
+      return;
+    }
+    setDialing(true);
+    // v1 mobile only dials audio. Webapp surfaces audio/video as two
+    // buttons; mobile gets video alongside the active-call UI cycle.
+    const ok = await CallRequest({
+      conversationType: params.type,
+      conversationID: params.conversationID,
+      callType: 'audio',
+      receivers: params.receivers,
+    });
+    setDialing(false);
+    if (ok) {
+      setOutgoing({ callType: 'audio', startedAt: Date.now() });
+    } else {
+      dispatch({
+        type: SET_ALERTS,
+        payload: {
+          alerts: {
+            id: alerts.length,
+            type: 'error',
+            content: 'Could not start the call.',
+          },
+        },
+      });
+    }
+  }, [
+    alerts.length,
+    dialing,
+    dispatch,
+    outgoing,
+    params.conversationID,
+    params.receivers,
+    params.type,
+  ]);
+
+  // Cancel an in-progress outbound ring. Fires EndCallRequest so the
+  // backend stops fan-out and any receiver modal dismisses too.
+  const onCancelCall = useCallback(() => {
+    if (!outgoing) return;
+    setOutgoing(null);
+    EndCallRequest({ conversationID: params.conversationID });
+  }, [outgoing, params.conversationID]);
+
+  // Watch for a declined ring: when our conversationID lands in
+  // rejectedcalllist, dismiss the ringing modal and surface a toast.
+  // Then drop the entry so a re-dial doesn't auto-dismiss.
+  useEffect(() => {
+    if (!outgoing) return;
+    if (!rejectedcalls.includes(params.conversationID)) return;
+    setOutgoing(null);
+    dispatch({
+      type: REMOVE_REJECTED_CALL_LIST,
+      payload: { callID: params.conversationID },
+    });
+    dispatch({
+      type: SET_ALERTS,
+      payload: {
+        alerts: {
+          id: alerts.length,
+          type: 'info',
+          content: `${params.title} declined the call.`,
+        },
+      },
+    });
+  }, [
+    alerts.length,
+    dispatch,
+    outgoing,
+    params.conversationID,
+    params.title,
+    rejectedcalls,
+  ]);
+
+  // Bail out cleanly if the user navigates away while ringing — fire
+  // EndCallRequest so the receiver's modal dismisses. Track via a ref
+  // so the unmount cleanup sees the current value without re-firing
+  // the effect on every ringing-state change.
+  const outgoingRef = useRef(outgoing);
+  useEffect(() => {
+    outgoingRef.current = outgoing;
+  }, [outgoing]);
+  useEffect(() => {
+    return () => {
+      if (outgoingRef.current) {
+        EndCallRequest({ conversationID: params.conversationID });
+      }
+    };
+  }, [params.conversationID]);
+
   const onChangeDraft = useCallback(
     (text: string) => {
       // Fire only when transitioning from "not typing" → "typing". The
@@ -557,14 +680,14 @@ export default function Conversation() {
         <IconBtn
           n="call"
           iconSize={20}
-          color={palette.text2}
-          // TODO(call): wire to voice call once MediaSoup UI is ported.
+          color={dialing ? palette.text3 : palette.text2}
+          onPress={onStartCall}
         />
         <IconBtn
           n="info-outline"
           iconSize={20}
           color={palette.text2}
-          // TODO(info): open ConversationInfoModal once ported.
+          onPress={() => setInfoOpen(true)}
         />
       </View>
 
@@ -703,6 +826,73 @@ export default function Conversation() {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      <ConversationInfoModal
+        visible={infoOpen}
+        onClose={() => setInfoOpen(false)}
+        title={params.title}
+        profile={params.profile}
+        type={params.type}
+        conversationID={params.conversationID}
+        receivers={params.receivers}
+      />
+
+      {outgoing ? (
+        <View style={styles.outgoingScrim}>
+          <View
+            style={[
+              styles.outgoingCard,
+              {
+                backgroundColor: palette.surface,
+                borderColor: palette.border,
+              },
+            ]}
+          >
+            <Text style={[styles.outgoingKicker, { color: palette.text3 }]}>
+              CALLING · {outgoing.callType === 'video' ? 'VIDEO' : 'AUDIO'}
+            </Text>
+            {params.profile ? (
+              <Image
+                source={{ uri: params.profile }}
+                style={styles.outgoingAvatar}
+              />
+            ) : (
+              <View
+                style={[
+                  styles.outgoingAvatar,
+                  styles.outgoingAvatarFallback,
+                  { backgroundColor: palette.brandSoft },
+                ]}
+              >
+                <Text
+                  style={[styles.outgoingInitial, { color: palette.brand }]}
+                >
+                  {params.title.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
+            <Text style={[styles.outgoingName, { color: palette.text }]}>
+              {params.title}
+            </Text>
+            <Text style={[styles.outgoingSub, { color: palette.text3 }]}>
+              Ringing…
+            </Text>
+            <Pressable
+              onPress={onCancelCall}
+              style={({ pressed }) => [
+                styles.outgoingCancel,
+                {
+                  backgroundColor: palette.pink,
+                  opacity: pressed ? 0.85 : 1,
+                },
+              ]}
+            >
+              <CLIcon n="call-end" size={26} color="#fff" />
+              <Text style={styles.outgoingCancelLabel}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -711,6 +901,54 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   body: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+  outgoingScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  outgoingCard: {
+    width: '100%',
+    maxWidth: 360,
+    borderWidth: 1,
+    borderRadius: radii.lg,
+    padding: 24,
+    alignItems: 'center',
+    gap: 10,
+  },
+  outgoingKicker: { fontSize: 11, fontWeight: '800', letterSpacing: 1.2 },
+  outgoingAvatar: {
+    width: 96,
+    height: 96,
+    borderRadius: radii.pill,
+    marginTop: 6,
+  },
+  outgoingAvatarFallback: { alignItems: 'center', justifyContent: 'center' },
+  outgoingInitial: { fontSize: 36, fontWeight: '800' },
+  outgoingName: {
+    fontSize: 20,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+    marginTop: 8,
+  },
+  outgoingSub: { fontSize: 13, fontWeight: '600' },
+  outgoingCancel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    height: 48,
+    borderRadius: radii.pill,
+    marginTop: 14,
+  },
+  outgoingCancelLabel: { color: '#fff', fontSize: 13, fontWeight: '800' },
 
   headerBar: {
     flexDirection: 'row',

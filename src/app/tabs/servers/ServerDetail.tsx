@@ -38,6 +38,7 @@ import {
   ServerDetails,
 } from '../../../reusables/hooks/requests';
 import { CreateChannelModal } from './CreateChannelModal';
+import { ServerInfoModal } from './ServerInfoModal';
 
 interface ServerDetailParams {
   serverID: string;
@@ -65,6 +66,7 @@ export default function ServerDetail() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   // Server channels deliver to every member except the current user.
   // Recomputed when the server roster changes (e.g. after refresh).
@@ -141,7 +143,7 @@ export default function ServerDetail() {
           n="info-outline"
           iconSize={22}
           color={palette.text2}
-          // TODO(server-info): open ServerInfoModal once ported.
+          onPress={details ? () => setInfoOpen(true) : undefined}
         />
       </View>
 
@@ -306,13 +308,20 @@ export default function ServerDetail() {
       )}
 
       {details ? (
-        <CreateChannelModal
-          visible={createChannelOpen}
-          onClose={() => setCreateChannelOpen(false)}
-          onCreated={() => load(true)}
-          serverID={details.serverID}
-          serverMembers={details.usersWithInfo ?? []}
-        />
+        <>
+          <CreateChannelModal
+            visible={createChannelOpen}
+            onClose={() => setCreateChannelOpen(false)}
+            onCreated={() => load(true)}
+            serverID={details.serverID}
+            serverMembers={details.usersWithInfo ?? []}
+          />
+          <ServerInfoModal
+            visible={infoOpen}
+            onClose={() => setInfoOpen(false)}
+            details={details}
+          />
+        </>
       ) : null}
     </SafeAreaView>
   );

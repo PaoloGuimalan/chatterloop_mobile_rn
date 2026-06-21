@@ -2,8 +2,12 @@
  * webapp/src/app/tabs/profile/diary/EntryView.tsx.
  *
  * Read-only single-entry detail. Webapp uses dangerouslySetInnerHTML on
- * the Quill HTML; RN has no native HTML renderer in this codebase, so
- * we strip tags and render as plain text. */
+ * Quill HTML; RN has no native HTML renderer in this codebase. Instead
+ * of pulling in react-native-render-html (which lags on RN 0.86 / React
+ * 19), we run a structured pass that turns common Quill block tags
+ * into plain-text affordances (lists → bullets, headers → newlines,
+ * blockquotes → "> " prefixes). Inline emphasis is dropped — bold and
+ * italics need a real renderer. */
 
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -31,16 +35,86 @@ interface EntryViewParams {
   entry_id: string;
 }
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .trim();
+const ENTITY_MAP: Record<string, string> = {
+  nbsp: ' ',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  '#39': "'",
+  hellip: '…',
+  mdash: '—',
+  ndash: '–',
+  lsquo: '‘',
+  rsquo: '’',
+  ldquo: '“',
+  rdquo: '”',
+};
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&(#?\w+);/g, (_m, name: string) => ENTITY_MAP[name] ?? `&${name};`)
+    .replace(/&#(\d+);/g, (_m, code: string) =>
+      String.fromCharCode(Number(code)),
+    );
+}
+
+/** Renders Quill HTML as plain text with light formatting affordances.
+ *  Lists become bullet/number prefixed lines, headers and blockquotes
+ *  get their own paragraph breaks, and `<br>` / `</p>` collapse to
+ *  newlines. Inline tags (bold, italic, links) are stripped — to
+ *  preserve those we'd need a real HTML renderer. */
+function renderHtmlAsText(html: string): string {
+  let s = html;
+
+  // Lists: walk each <ol>/<ul> block and number/bullet its <li>s.
+  s = s.replace(
+    /<ol\b[^>]*>([\s\S]*?)<\/ol>/gi,
+    (_m, inner: string) => {
+      let i = 0;
+      return (
+        '\n' +
+        inner.replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, (__m, item: string) => {
+          i += 1;
+          return `${i}. ${item.trim()}\n`;
+        }) +
+        '\n'
+      );
+    },
+  );
+  s = s.replace(
+    /<ul\b[^>]*>([\s\S]*?)<\/ul>/gi,
+    (_m, inner: string) =>
+      '\n' +
+      inner.replace(
+        /<li\b[^>]*>([\s\S]*?)<\/li>/gi,
+        (__m, item: string) => `• ${item.trim()}\n`,
+      ) +
+      '\n',
+  );
+
+  // Block-level breaks.
+  s = s.replace(/<\/(h[1-6]|p|div|blockquote)>/gi, '\n\n');
+  s = s.replace(/<br\s*\/?>/gi, '\n');
+
+  // Blockquote prefix: any line in a <blockquote> gets a leading "> ".
+  s = s.replace(
+    /<blockquote\b[^>]*>([\s\S]*?)(?=<\/blockquote>|$)/gi,
+    (_m, inner: string) =>
+      inner
+        .split('\n')
+        .map((ln) => (ln.trim() ? `> ${ln}` : ln))
+        .join('\n'),
+  );
+
+  // Strip everything else.
+  s = s.replace(/<[^>]+>/g, '');
+  s = decodeEntities(s);
+
+  // Collapse 3+ blank lines down to 2; trim outer whitespace.
+  s = s.replace(/\n{3,}/g, '\n\n').trim();
+  return s;
 }
 
 export default function EntryView() {
@@ -124,7 +198,7 @@ export default function EntryView() {
           ) : null}
 
           <Text style={[styles.content, { color: palette.text }]}>
-            {stripHtml(entry.content)}
+            {renderHtmlAsText(entry.content)}
           </Text>
 
           {entry.attachments.length > 0 ? (

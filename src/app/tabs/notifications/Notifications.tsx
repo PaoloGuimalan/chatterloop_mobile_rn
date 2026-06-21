@@ -27,6 +27,7 @@ import { radii } from "../../../reusables/design/tokens";
 import { timeSince } from "../../../reusables/hooks/reusable";
 import {
   AcceptContactRequest,
+  DeclineContactRequest,
   NotificationAppendRequest,
   NotificationInitRequest,
   ReadNotificationsRequest,
@@ -113,6 +114,19 @@ export default function Notifications() {
     [alerts, dispatch],
   );
 
+  const declineRequest = useCallback(
+    (connection_id: string, to_user_id: string) => {
+      setBusyConnId(connection_id);
+      DeclineContactRequest(
+        { connection_id, to_user_id, action: "decline" },
+        dispatch,
+        alerts,
+        () => setBusyConnId(null),
+      );
+    },
+    [alerts, dispatch],
+  );
+
   const renderItem = useCallback(
     ({ item }: { item: NotificationItem }) => {
       const isContactRequest = item.type === "contact_request";
@@ -180,18 +194,23 @@ export default function Notifications() {
                 >
                   Confirm
                 </Btn>
-                <Btn size="sm" variant="outline" disabled={busy}>
+                <Btn
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onPress={() =>
+                    declineRequest(item.referenceID!, item.fromUserID!)
+                  }
+                >
                   Decline
                 </Btn>
-                {/* TODO(decline): port DeclineContactRequest — webapp version
-                    is commented out, may need backend re-add. */}
               </View>
             ) : null}
           </View>
         </View>
       );
     },
-    [palette, busyConnId, acceptRequest],
+    [palette, busyConnId, acceptRequest, declineRequest],
   );
 
   const showInitialLoader = isLoading && !refreshing;
