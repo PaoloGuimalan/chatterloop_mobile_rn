@@ -13,7 +13,9 @@
  *
  * Deferred (TODOs):
  *   - Mentions, replies, reactions, emoji picker for chat.
- *   - Voice / video call buttons (depends on MediaSoup port).
+ *   - Active call UI / media transport (signaling is wired via
+ *     CallRequest + EndCallRequest; MediaSoup transport is the cycle
+ *     after that).
  *   - Server / group / channel variants beyond what's covered by the
  *     route params shape. */
 
@@ -460,11 +462,25 @@ export default function Conversation() {
     setDialing(true);
     // v1 mobile only dials audio. Webapp surfaces audio/video as two
     // buttons; mobile gets video alongside the active-call UI cycle.
+    //
+    // Payload mirrors webapp Conversation.tsx exactly — the backend
+    // keys are `recepients` (misspelled) and `caller`, and it relies
+    // on `callDisplayName` + `displayImage` to populate the
+    // receiver's incoming-call modal. Omitting any of these makes
+    // the fan-out silently drop the request.
+    const callerName = authentication.user.fullName.firstName;
     const ok = await CallRequest({
+      callType: 'audio',
+      callDisplayName:
+        params.type === 'single'
+          ? callerName
+          : `${params.title} (Group)`,
       conversationType: params.type,
       conversationID: params.conversationID,
-      callType: 'audio',
-      receivers: params.receivers,
+      caller: { name: callerName, userID: authentication.user.userID },
+      recepients: params.receivers,
+      displayImage:
+        params.type === 'single' ? params.profile ?? 'none' : 'none',
     });
     setDialing(false);
     if (ok) {
@@ -483,11 +499,15 @@ export default function Conversation() {
     }
   }, [
     alerts.length,
+    authentication.user.fullName.firstName,
+    authentication.user.userID,
     dialing,
     dispatch,
     outgoing,
     params.conversationID,
+    params.profile,
     params.receivers,
+    params.title,
     params.type,
   ]);
 
@@ -496,8 +516,12 @@ export default function Conversation() {
   const onCancelCall = useCallback(() => {
     if (!outgoing) return;
     setOutgoing(null);
-    EndCallRequest({ conversationID: params.conversationID });
-  }, [outgoing, params.conversationID]);
+    EndCallRequest({
+      conversationID: params.conversationID,
+      conversationType: params.type,
+      recepients: params.receivers,
+    });
+  }, [outgoing, params.conversationID, params.receivers, params.type]);
 
   // Watch for a declined ring: when our conversationID lands in
   // rejectedcalllist, dismiss the ringing modal and surface a toast.
@@ -532,18 +556,32 @@ export default function Conversation() {
   // Bail out cleanly if the user navigates away while ringing — fire
   // EndCallRequest so the receiver's modal dismisses. Track via a ref
   // so the unmount cleanup sees the current value without re-firing
-  // the effect on every ringing-state change.
+  // the effect on every ringing-state change. Also stash the metadata
+  // we'll need at unmount time, so the cleanup doesn't have to read
+  // stale closures of conversationType / receivers.
   const outgoingRef = useRef(outgoing);
   useEffect(() => {
     outgoingRef.current = outgoing;
   }, [outgoing]);
+  const endCallMetaRef = useRef({
+    conversationID: params.conversationID,
+    conversationType: params.type,
+    recepients: params.receivers,
+  });
+  useEffect(() => {
+    endCallMetaRef.current = {
+      conversationID: params.conversationID,
+      conversationType: params.type,
+      recepients: params.receivers,
+    };
+  }, [params.conversationID, params.receivers, params.type]);
   useEffect(() => {
     return () => {
       if (outgoingRef.current) {
-        EndCallRequest({ conversationID: params.conversationID });
+        EndCallRequest(endCallMetaRef.current);
       }
     };
-  }, [params.conversationID]);
+  }, []);
 
   const onChangeDraft = useCallback(
     (text: string) => {
@@ -677,12 +715,14 @@ export default function Conversation() {
               : 'Direct message'}
           </Text>
         </View>
-        <IconBtn
-          n="call"
-          iconSize={20}
-          color={dialing ? palette.text3 : palette.text2}
-          onPress={onStartCall}
-        />
+        {params.type === 'server' ? null : (
+          <IconBtn
+            n="call"
+            iconSize={20}
+            color={dialing ? palette.text3 : palette.text2}
+            onPress={onStartCall}
+          />
+        )}
         <IconBtn
           n="info-outline"
           iconSize={20}

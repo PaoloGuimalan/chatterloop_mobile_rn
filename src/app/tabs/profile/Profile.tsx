@@ -8,9 +8,6 @@
  * scoped to the current user.
  *
  * Out of scope (TODOs):
- *   - Cover / avatar editor (depends on react-native-image-picker +
- *     UploadMediaRequest).
- *   - Diary card.
  *   - Follower / following counts (need the dedicated endpoint).
  *   - Archive view toggle. */
 
@@ -38,10 +35,13 @@ import { radii } from '../../../reusables/design/tokens';
 import {
   AuthCheck,
   CreatePostRequest,
+  DiaryPreview,
   FeedPost,
+  GetDiaryTotalRequest,
   GetPostRequest,
   LogoutRequest,
 } from '../../../reusables/hooks/requests';
+import { timeSince } from '../../../reusables/hooks/reusable';
 import { pickImages } from '../../../reusables/hooks/imagePicker';
 import {
   CLEAR_PENDING_CALL_ALERTS,
@@ -75,6 +75,8 @@ export default function Profile() {
   const [uploadingTarget, setUploadingTarget] = useState<
     null | 'cover_photo' | 'profile'
   >(null);
+  const [diary, setDiary] = useState<DiaryPreview | null>(null);
+  const [diaryLoading, setDiaryLoading] = useState(true);
   const alerts = useSelector((s: AppState) => s.alerts);
 
   const clearStates = () => {
@@ -175,13 +177,21 @@ export default function Profile() {
     async (silent: boolean) => {
       if (!user.userID) return;
       if (!silent) setIsLoading(true);
-      const response = await GetPostRequest({
-        current_user_id: user.userID,
-        userID: user.username,
-        page: 1,
-        range: RANGE,
-      });
-      setPosts(response.results ?? []);
+      setDiaryLoading(true);
+      // Fetch posts and the diary summary in parallel — they don't
+      // depend on each other, and the summary endpoint is cheap.
+      const [postsResponse, diaryResponse] = await Promise.all([
+        GetPostRequest({
+          current_user_id: user.userID,
+          userID: user.username,
+          page: 1,
+          range: RANGE,
+        }),
+        GetDiaryTotalRequest(user.username),
+      ]);
+      setPosts(postsResponse.results ?? []);
+      setDiary(diaryResponse);
+      setDiaryLoading(false);
       setIsLoading(false);
       setRefreshing(false);
     },
@@ -363,14 +373,72 @@ export default function Profile() {
             size="sm"
             onPress={() => nav.navigate('Pages')}
           />
-          <Btn
-            label="Diary"
-            iconL="book"
-            variant="outline"
-            size="sm"
-            onPress={() => nav.navigate('Diary')}
-          />
         </View>
+
+        <Pressable
+          onPress={() => nav.navigate('Diary')}
+          style={({ pressed }) => [
+            styles.diaryCard,
+            {
+              backgroundColor: palette.surface,
+              borderColor: palette.border,
+              opacity: pressed ? 0.7 : 1,
+            },
+          ]}
+        >
+          <View
+            style={[styles.diaryIcon, { backgroundColor: palette.brandSoft }]}
+          >
+            <CLIcon n="book" size={20} color={palette.brand} />
+          </View>
+          <View style={styles.diaryBody}>
+            <Text style={[styles.diaryHead, { color: palette.text }]}>
+              Diary
+            </Text>
+            {diaryLoading ? (
+              <Text style={[styles.diarySub, { color: palette.text3 }]}>
+                Loading…
+              </Text>
+            ) : !diary || diary.total_entries === 0 ? (
+              <Text style={[styles.diarySub, { color: palette.text3 }]}>
+                No entries yet · tap to start journaling
+              </Text>
+            ) : (
+              <>
+                <Text style={[styles.diarySub, { color: palette.text2 }]}>
+                  {diary.total_entries}{' '}
+                  {diary.total_entries === 1 ? 'entry' : 'entries'}
+                  {diary.latest_entry
+                    ? ` · last ${timeSince(diary.latest_entry)}`
+                    : ''}
+                </Text>
+                {diary.top_tags.length > 0 ? (
+                  <View style={styles.diaryTagRow}>
+                    {diary.top_tags.slice(0, 4).map(t => (
+                      <View
+                        key={t.id}
+                        style={[
+                          styles.diaryTag,
+                          { backgroundColor: palette.brandSoft },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.diaryTagText,
+                            { color: palette.brand },
+                          ]}
+                        >
+                          {t.name}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </>
+            )}
+          </View>
+          <CLIcon n="chevron-right" size={18} color={palette.text3} />
+        </Pressable>
 
         <Pressable
           onPress={() => {
@@ -500,6 +568,39 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 14,
   },
+
+  diaryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 14,
+  },
+  diaryIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  diaryBody: { flex: 1, gap: 3 },
+  diaryHead: { fontSize: 14, fontWeight: '700' },
+  diarySub: { fontSize: 12 },
+  diaryTagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 4,
+  },
+  diaryTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.sm,
+  },
+  diaryTagText: { fontSize: 11, fontWeight: '700' },
 
   logoutBtn: { marginTop: 22, marginBottom: 8 },
   logoutText: { fontSize: 13, fontWeight: '700' },

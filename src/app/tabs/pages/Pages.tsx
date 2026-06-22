@@ -7,10 +7,8 @@
  * grid.
  *
  * TODOs:
- *   - Page detail view (tap a tile) — depends on porting the realm
- *     profile screen, still a stub.
- *   - Create-page flow — webapp routes /pages/my-pages/create. Wire
- *     once the form is ported. */
+ *   - Realtime: page-follow changes don't push yet (webapp doesn't
+ *     either — list is fetched on focus). */
 
 import React, { useCallback, useEffect, useState } from 'react';
 import {

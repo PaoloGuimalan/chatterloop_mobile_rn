@@ -12,9 +12,7 @@
  * Out of scope (TODOs):
  *   - Lazy pagination — webapp uses IntersectionObserver; replace with
  *     onEndReached + per-screen GetFeedRequest call when needed.
- *   - Comment screens (the comment count is read-only here).
- *   - The web "feature card" empty banners (Diary / Map / Extension).
- *   - View-cache telemetry — webapp uses IndexedDB; not ported. */
+ *   - The web "feature card" empty banners (Diary / Map / Extension). */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -80,6 +78,9 @@ export default function Feed() {
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const {
     sortedEmojis,

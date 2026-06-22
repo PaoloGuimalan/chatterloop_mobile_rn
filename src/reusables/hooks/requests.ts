@@ -1781,6 +1781,36 @@ export const PostNewEntryRequest = async (
   }
 };
 
+export interface DiaryPreview {
+  latest_entry: string | null;
+  top_tags: { id: number; name: string }[];
+  total_entries: number;
+}
+
+/** Backs the profile diary summary card. Returns null on failure so
+ *  the caller can render a skeleton row without throwing. */
+export const GetDiaryTotalRequest = async (
+  userID: string,
+): Promise<DiaryPreview | null> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.get(
+      `${USER_SERVICE_API}/api/diary/total/${userID}/`,
+      { headers: { 'x-access-token': token } },
+    );
+    const data = response.data;
+    if (!data) return null;
+    return {
+      latest_entry: data.latest_entry ?? null,
+      top_tags: Array.isArray(data.top_tags) ? data.top_tags : [],
+      total_entries: data.total_entries ?? 0,
+    };
+  } catch (err) {
+    console.log('[GetDiaryTotalRequest]', err);
+    return null;
+  }
+};
+
 // ---- ActiveContactsRequest -------------------------------------------------
 
 export const ActiveContactsRequest = async (dispatch: Dispatch<any>) => {
@@ -1802,13 +1832,25 @@ export const ActiveContactsRequest = async (dispatch: Dispatch<any>) => {
 
 // ---- Call signaling helpers -----------------------------------------------
 
+export interface CallCaller {
+  name: string;
+  userID: string;
+}
+
 /** Caller-side: tell the backend to fan out an `incomingcall` push to
- *  every receiver. Body is JWT-signed per webapp's contract. */
+ *  every recipient. Body is JWT-signed per webapp's contract.
+ *
+ *  Note: backend expects the *misspelled* `recepients` key (not
+ *  `recipients`). The receivers array in route params is just IDs —
+ *  same shape as `callRecipients` in webapp Conversation.tsx. */
 export const CallRequest = async (params: {
   conversationType: string;
   conversationID: string;
   callType: 'audio' | 'video';
-  receivers: string[];
+  callDisplayName: string;
+  caller: CallCaller;
+  recepients: string[];
+  displayImage: string;
 }): Promise<boolean> => {
   try {
     const token = await getItem('authtoken');
@@ -1846,9 +1888,13 @@ export const RejectCallRequest = async (params: {
 };
 
 /** Caller- or callee-side: tell the backend the call session is over so
- *  it can broadcast `endcall` to the other side(s). */
+ *  it can broadcast `endcall` to the other side(s). `recepients`
+ *  (misspelled) and `conversationType` are required when the caller
+ *  cancels mid-ring — without them the backend has nobody to notify. */
 export const EndCallRequest = async (params: {
   conversationID: string;
+  conversationType?: string;
+  recepients?: string[];
   [k: string]: unknown;
 }): Promise<void> => {
   try {

@@ -7,8 +7,7 @@
  *     RN's `DeviceEventEmitter.emit(...)`. Consumers (Conversation
  *     screens, call UI) subscribe with `DeviceEventEmitter.addListener`.
  *   - Replaces `localStorage.getItem` with the async storage wrapper.
- *   - Sound playback is intentionally skipped here — pick `react-native-sound`
- *     (or similar) and wire the TODOs below when you port the ringtone UX. */
+ *   - Sound playback is wired through ./sounds.ts (react-native-sound). */
 
 import RNEventSource from 'react-native-sse';
 import sign from 'jwt-encode';

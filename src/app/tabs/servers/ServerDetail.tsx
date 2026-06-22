@@ -9,9 +9,9 @@
  * visible kind hint.
  *
  * TODOs:
- *   - Voice channel join: depends on the MediaSoup call UI port.
- *   - Location channel: depends on the MapFeed port.
- *   - ServerInfoModal / CreateChannelModal / members drawer. */
+ *   - Voice channel join: depends on the MediaSoup active call UI.
+ *   - Location channel: depends on the full MapFeed port (list view
+ *     ships now, map view comes with @rnmapbox/maps). */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {

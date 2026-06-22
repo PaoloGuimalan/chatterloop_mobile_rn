@@ -8,10 +8,9 @@
  * "active_users" updates).
  *
  * Out of scope (TODOs):
- *   - Decline / remove contact (DeclineContactRequest is commented out
- *     in the webapp source — needs backend re-add).
- *   - Tap-to-message — depends on Conversation.tsx and the conversation
- *     setup slice, neither ported yet.
+ *   - Remove/unfriend from this screen — DeclineContactRequest is
+ *     ported and wired in Notifications. We intentionally surface
+ *     unfriend on the other user's profile instead of here.
  *   - Group / server contact rows. Webapp only renders the `single`
  *     variant here; mirroring that exactly. */
 

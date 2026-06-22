@@ -7,8 +7,6 @@
  * which is still a stub.
  *
  * TODOs:
- *   - Channels.tsx → per-server channel list (port partials/Channels.tsx).
- *   - Create-server modal → CreateServerModal in the webapp widgets dir.
  *   - Realtime: server membership changes don't push yet (webapp doesn't
  *     either — list is fetched once on mount). */
 

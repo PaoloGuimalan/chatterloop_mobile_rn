@@ -9,7 +9,6 @@
  *     "messages_list" events)
  *
  * Out of scope (TODOs):
- *   - The thread view (Conversation.tsx) — still a separate stub
  *   - Search / segment tabs / compose menu / create-group / create-server
  *   - Lazy pagination (webapp uses IntersectionObserver) */
 
