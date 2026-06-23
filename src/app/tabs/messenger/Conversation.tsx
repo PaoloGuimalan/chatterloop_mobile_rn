@@ -50,6 +50,7 @@ import { radii } from '../../../reusables/design/tokens';
 import { timeSince } from '../../../reusables/hooks/reusable';
 import {
   CallRequest,
+  DeleteMessageRequest,
   EndCallRequest,
   InitConversationRequest,
   IsTypingBroadcastRequest,
@@ -62,6 +63,8 @@ import { pickImages } from '../../../reusables/hooks/imagePicker';
 import { generateUUID } from '../../../reusables/hooks/uuid';
 import { ConversationInfoModal } from './ConversationInfoModal';
 import ContentHandler from './partials/ContentHandler';
+import MessageActionsSheet from './partials/MessageActionsSheet';
+import ImageLightbox from './partials/ImageLightbox';
 import type {
   IContact,
   PaginationProp,
@@ -84,6 +87,10 @@ export interface ReplyedMessage {
   sender: string;
   content?: string;
   messageType?: string;
+  /** Tombstone flag from the backend on the quoted message. When true,
+   *  the reply's preview swaps to a "Original message deleted" state
+   *  instead of showing stale content. */
+  isDeleted?: boolean;
 }
 
 export interface MessageReaction {
@@ -288,6 +295,16 @@ export default function Conversation() {
   const [attaching, setAttaching] = useState(false);
   const [dialing, setDialing] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  // Reply target — set by the long-press → Reply action on a bubble.
+  // Stored on the screen so the composer can render the preview row
+  // and forward {isReply, replyingTo} to SendMessageRequest.
+  const [replyingTo, setReplyingTo] = useState<DisplayMessage | null>(null);
+  // Long-press target for the floating action sheet.
+  const [actionTarget, setActionTarget] = useState<DisplayMessage | null>(
+    null,
+  );
+  // In-app image lightbox source. Null = closed.
+  const [lightboxURI, setLightboxURI] = useState<string | null>(null);
   // Set when an outbound call is ringing. Drives the inline
   // OutgoingCallModal at the bottom of this screen.
   const [outgoing, setOutgoing] = useState<{
@@ -478,6 +495,7 @@ export default function Conversation() {
     const text = draft.trim();
     if (!text || sending) return;
     const pendingID = generateUUID();
+    const reply = replyingTo;
     const optimistic: DisplayMessage = {
       id: pendingID,
       conversationID: params.conversationID,
@@ -490,12 +508,25 @@ export default function Conversation() {
       seeners: [],
       pending: true,
       pendingID,
+      isReply: reply ? true : undefined,
+      replyedmessage: reply
+        ? [
+            {
+              sender: reply.sender,
+              content: reply.content,
+              messageType: reply.messageType,
+            },
+          ]
+        : undefined,
     };
     // Inverted FlatList renders index 0 at the bottom — put new
     // messages at the top of the array. sortNewestFirst keeps pending
     // bubbles ahead of any in-flight SSE arrivals from the other party.
     setMessages(prev => sortNewestFirst([optimistic, ...prev]));
     setDraft('');
+    // Clear the reply target immediately so a slow send doesn't leave
+    // the preview row stuck while the user starts a fresh thought.
+    setReplyingTo(null);
     setSending(true);
     const ok = await SendMessageRequest({
       conversationID: params.conversationID,
@@ -504,6 +535,8 @@ export default function Conversation() {
       content: text,
       messageType: 'text',
       conversationType: params.type,
+      isReply: reply ? true : undefined,
+      replyingTo: reply ? reply.messageID : undefined,
     });
     if (!ok) {
       // Roll the bubble back if the request failed entirely.
@@ -513,7 +546,7 @@ export default function Conversation() {
     // SSE reload will replace the optimistic bubble with the
     // server-confirmed version (matched on pendingID).
     setIsAlreadyTyping(false);
-  }, [draft, me, params, sending]);
+  }, [draft, me, params, replyingTo, sending]);
 
   // 5-second typing cooldown — mirrors webapp. After the cooldown,
   // the next keystroke re-fires IsTypingBroadcastRequest so the other
@@ -746,6 +779,60 @@ export default function Conversation() {
     );
   }, []);
 
+  const onReplyTo = useCallback((cnvs: DisplayMessage) => {
+    setReplyingTo(cnvs);
+  }, []);
+
+  const onLongPressMessage = useCallback((cnvs: DisplayMessage) => {
+    setActionTarget(cnvs);
+  }, []);
+
+  const onOpenImage = useCallback((uri: string) => {
+    if (uri.startsWith('data:')) {
+      // Optimistic-pending bubbles still hold a data URL — RN's Image
+      // can render those but Modal handoff is messy. Skip until SSE
+      // confirms with the persisted URL.
+      return;
+    }
+    setLightboxURI(uri);
+  }, []);
+
+  // Optimistic delete: flip isDeleted locally so the bubble swaps to
+  // the tombstone immediately. The SSE messages_list reload that
+  // follows the backend ack will replace this with the canonical row.
+  const onDelete = useCallback(
+    async (cnvs: DisplayMessage) => {
+      setMessages(prev =>
+        prev.map(m =>
+          m.messageID === cnvs.messageID ? { ...m, isDeleted: true } : m,
+        ),
+      );
+      const ok = await DeleteMessageRequest({
+        conversationID: cnvs.conversationID,
+        messageID: cnvs.messageID,
+      });
+      if (!ok) {
+        // Rollback if the server refused.
+        setMessages(prev =>
+          prev.map(m =>
+            m.messageID === cnvs.messageID ? { ...m, isDeleted: false } : m,
+          ),
+        );
+        dispatch({
+          type: SET_ALERTS,
+          payload: {
+            alerts: {
+              id: alerts.length,
+              type: 'error',
+              content: 'Could not delete the message.',
+            },
+          },
+        });
+      }
+    },
+    [alerts.length, dispatch],
+  );
+
   const renderItem = useCallback(
     ({ item, index }: { item: DisplayMessage; index: number }) => {
       return (
@@ -755,11 +842,20 @@ export default function Conversation() {
           conversationType={params.type}
           me={me}
           memberName={memberName}
+          onOpenImage={onOpenImage}
           onOpenMedia={openMedia}
+          onLongPressMessage={onLongPressMessage}
         />
       );
     },
-    [me, memberName, openMedia, params.type],
+    [
+      me,
+      memberName,
+      onLongPressMessage,
+      onOpenImage,
+      openMedia,
+      params.type,
+    ],
   );
 
   const hasAvatar = params.profile && params.profile !== 'none';
@@ -910,6 +1006,53 @@ export default function Conversation() {
           </View>
         ) : null}
 
+        {replyingTo ? (
+          <View
+            style={[
+              styles.replyPreviewBar,
+              {
+                backgroundColor: palette.surface2,
+                borderTopColor: palette.border,
+              },
+            ]}
+          >
+            <View style={styles.replyPreviewCopy}>
+              <Text
+                numberOfLines={1}
+                style={[styles.replyPreviewLabel, { color: palette.brand }]}
+              >
+                Replying to {memberName(replyingTo.sender)}
+              </Text>
+              <Text
+                numberOfLines={1}
+                style={[styles.replyPreviewSnippet, { color: palette.text2 }]}
+              >
+                {replyingTo.messageType === 'text'
+                  ? replyingTo.content
+                  : replyingTo.mediaKind === 'image'
+                  ? 'Photo'
+                  : replyingTo.mediaKind === 'video'
+                  ? 'Video'
+                  : replyingTo.mediaKind === 'audio'
+                  ? 'Audio'
+                  : replyingTo.mediaKind === 'file'
+                  ? replyingTo.fileName ?? 'File'
+                  : replyingTo.content}
+              </Text>
+            </View>
+            <Pressable
+              hitSlop={8}
+              onPress={() => setReplyingTo(null)}
+              style={({ pressed }) => [
+                styles.replyPreviewClose,
+                { opacity: pressed ? 0.6 : 1 },
+              ]}
+            >
+              <CLIcon n="close" size={16} color={palette.text2} />
+            </Pressable>
+          </View>
+        ) : null}
+
         <View style={[styles.composer, { borderTopColor: palette.border }]}>
           <Pressable
             disabled={attaching}
@@ -967,6 +1110,19 @@ export default function Conversation() {
         type={params.type}
         conversationID={params.conversationID}
         receivers={params.receivers}
+      />
+
+      <MessageActionsSheet
+        target={actionTarget}
+        me={me}
+        onClose={() => setActionTarget(null)}
+        onReply={onReplyTo}
+        onDelete={onDelete}
+      />
+
+      <ImageLightbox
+        uri={lightboxURI}
+        onClose={() => setLightboxURI(null)}
       />
 
       {outgoing ? (
@@ -1162,5 +1318,24 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  replyPreviewBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+  },
+  replyPreviewCopy: { flex: 1, gap: 1, minWidth: 0 },
+  replyPreviewLabel: { fontSize: 11, fontWeight: '700' },
+  replyPreviewSnippet: { fontSize: 12.5 },
+  replyPreviewClose: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.pill,
   },
 });

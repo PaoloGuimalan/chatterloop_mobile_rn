@@ -1830,6 +1830,31 @@ export const ActiveContactsRequest = async (dispatch: Dispatch<any>) => {
   }
 };
 
+// ---- Message-level helpers -------------------------------------------------
+
+/** Soft-deletes a message by ID. Webapp signs the {conversationID,
+ *  messageID} payload as a JWT then POSTs to `/m/deletemessage`. The
+ *  backend flips `isDeleted` on the row and broadcasts `messages_list`
+ *  via SSE so the conversation list/thread refresh on every device. */
+export const DeleteMessageRequest = async (params: {
+  conversationID: string;
+  messageID: string;
+}): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const encoded = sign(params, SECRET);
+    const response = await Axios.post(
+      `${API}/m/deletemessage`,
+      { token: encoded },
+      { headers: { 'x-access-token': token } },
+    );
+    return Boolean(response.data?.status ?? true);
+  } catch (err) {
+    console.log('[DeleteMessageRequest]', err);
+    return false;
+  }
+};
+
 // ---- Call signaling helpers -----------------------------------------------
 
 export interface CallCaller {

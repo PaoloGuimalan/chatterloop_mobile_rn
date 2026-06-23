@@ -1,3 +1,4 @@
+/* eslint-disable react-native/no-inline-styles */
 /* ContentHandler — native port of
  * webapp/src/app/tabs/messenger/partials/ContentHandler.tsx.
  *
@@ -15,25 +16,23 @@
  * Mobile parity notes — features whose UI/data layer haven't shipped
  * yet on native are skipped here with TODO markers rather than faked:
  *
- *   - MessageOptions hover dropdown (reply / delete / copy / forward)
+ *   - MessageOptions has been replaced by MessageActionsSheet — an
+ *     Instagram-style floating menu shown via Conversation.tsx when
+ *     `onLongPressMessage` fires.
+ *   - ReplyingToPreview ships as RepliedPreview below — a stacked
+ *     mini-bubble above the reply showing the quoted sender + snippet,
+ *     matching the Messenger pattern.
  *   - EmojiPickerHandler + ReactionsModal for adding/inspecting
  *     reactions. Display of existing reactions IS shown — just no
- *     add/remove affordance.
- *   - ReplyingToPreview component. We render the metadata label
- *     ("replied to your message") but not the quoted bubble preview.
+ *     add/remove affordance (the actions sheet's reaction row also
+ *     dismisses without sending until that endpoint is wired).
  *   - urlify + mention highlighting. Plain Text for v1.
  *
  * The component is a pure renderer — Conversation.tsx still owns
  * viewport tracking (seen-on-view), the directory lookup, and theme. */
 
-import React, { useMemo } from 'react';
-import {
-  Image,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import React, { useCallback, useMemo } from 'react';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '../../../../reusables/design/ThemeProvider';
 import { CLIcon } from '../../../../reusables/design/primitives';
@@ -52,9 +51,17 @@ interface Props {
   /** Resolves a userID to a display first-name. Falls back to
    *  "Someone" inside the resolver when there's no match. */
   memberName: (userID: string) => string;
-  /** Tap handler for any media bubble (image/video/audio/file).
-   *  Conversation.tsx wires this to Linking.openURL. */
+  /** Tap on an image bubble — opens the in-app lightbox. Non-image
+   *  media (video / audio / file) still hands off to the device via
+   *  the onOpenMedia path. */
+  onOpenImage: (uri: string) => void;
+  /** Tap on a video / audio / file bubble. Conversation.tsx wires this
+   *  to Linking.openURL until we install react-native-video for
+   *  in-app playback. */
   onOpenMedia: (uri?: string) => void;
+  /** Long-press a bubble → open the floating action sheet. Conversation
+   *  owns the sheet state so it can render the modal at the screen root. */
+  onLongPressMessage: (cnvs: DisplayMessage) => void;
 }
 
 function ContentHandler({
@@ -63,21 +70,30 @@ function ContentHandler({
   conversationType,
   me,
   memberName,
+  onOpenImage,
   onOpenMedia,
+  onLongPressMessage,
 }: Props) {
   const { palette } = useTheme();
 
+  // Long-press → floating action sheet. Notif and pending bubbles
+  // intentionally have no actions — they can't be replied to or
+  // deleted before they hit the server. Deleted tombstones also
+  // shouldn't be re-acted on.
+  const isOwn = cnvs.sender === me;
+  const onLongPress = useCallback(() => {
+    if (cnvs.messageType === 'notif' || cnvs.pending || cnvs.isDeleted) return;
+    onLongPressMessage(cnvs);
+  }, [cnvs, onLongPressMessage]);
+
   // ---- shared bits used by every branch ------------------------------------
 
-  const isOwn = cnvs.sender === me;
   const showSenderLabel =
     !isOwn && (conversationType === 'group' || conversationType === 'server');
 
   const showSeenBy = useMemo(() => {
     if (i !== 0) return false;
-    return (
-      cnvs.seeners.filter(s => s !== cnvs.sender && s !== me).length > 0
-    );
+    return cnvs.seeners.filter(s => s !== cnvs.sender && s !== me).length > 0;
   }, [cnvs.seeners, cnvs.sender, i, me]);
 
   const seenByNames = useMemo(() => {
@@ -86,14 +102,71 @@ function ContentHandler({
       .map(s => memberName(s));
   }, [cnvs.seeners, cnvs.sender, me, memberName]);
 
-  const replyLabel = useMemo(() => {
+  const repliedTo = useMemo(() => {
     if (!cnvs.isReply) return null;
-    const replied = cnvs.replyedmessage?.[0];
-    if (!replied) return 'replied to a message';
-    return replied.sender === me
+    return cnvs.replyedmessage?.[0] ?? null;
+  }, [cnvs.isReply, cnvs.replyedmessage]);
+
+  // Tint the quoted preview by the QUOTED author — replying to your
+  // own message paints brand; replying to someone else's stays neutral
+  // surface. Same idea Messenger uses to keep author identity visible
+  // at a glance even on the smaller quoted card.
+  const repliedToIsOwn = repliedTo?.sender === me;
+
+  const replyLabel = useMemo(() => {
+    if (!repliedTo) return null;
+    return repliedToIsOwn
       ? 'replied to your message'
-      : `replied to ${memberName(replied.sender)}`;
-  }, [cnvs.isReply, cnvs.replyedmessage, me, memberName]);
+      : `replied to ${memberName(repliedTo.sender)}`;
+  }, [memberName, repliedTo, repliedToIsOwn]);
+
+  // Classify the quoted message so RepliedPreview can render a real
+  // thumbnail / icon row instead of just a "Photo"/"Video" placeholder.
+  // Media URLs come on the `content` field of the replyedmessage entry
+  // (matches webapp's CachedImage src={cnvs.content} pattern). The
+  // server may pack a filename suffix after "%%%" on file uploads to
+  // GCS — strip that before using as an Image source.
+  const repliedMedia = useMemo<{
+    kind: 'text' | 'image' | 'video' | 'audio' | 'file' | 'deleted';
+    snippet: string;
+    uri?: string;
+    fileName?: string;
+  } | null>(() => {
+    if (!repliedTo) return null;
+    // Deleted wins over kind classification — even if the backend
+    // still ships the old content / messageType, we shouldn't render
+    // the stale media. Show the tombstone state instead.
+    if (repliedTo.isDeleted) {
+      return { kind: 'deleted', snippet: 'Original message deleted' };
+    }
+    const t = (repliedTo.messageType ?? '').toLowerCase();
+    const raw = repliedTo.content ?? '';
+    if (t === 'text' || t === 'notif' || t === '') {
+      return { kind: 'text', snippet: raw };
+    }
+    // Split storage URLs like ".../file?token###...%%%filename.ext"
+    // into the bare URL + the trailing filename the server appended.
+    const [rawUri, filenameSuffix] = raw.split('%%%');
+    const uri = rawUri?.replace('###', '%23%23%23') || undefined;
+    const fileName =
+      filenameSuffix ||
+      (uri ? uri.split('?')[0].split('/').pop() || undefined : undefined);
+    if (t.includes('image')) {
+      return { kind: 'image', snippet: 'Photo', uri, fileName };
+    }
+    if (t.includes('video')) {
+      return { kind: 'video', snippet: 'Video', uri, fileName };
+    }
+    if (t.includes('audio')) {
+      return { kind: 'audio', snippet: 'Audio', uri, fileName };
+    }
+    return {
+      kind: 'file',
+      snippet: fileName ?? 'Attachment',
+      uri,
+      fileName,
+    };
+  }, [repliedTo]);
 
   const reactionsBucket = useMemo(() => {
     const list = cnvs.reactions ?? [];
@@ -124,10 +197,14 @@ function ContentHandler({
   if (cnvs.isDeleted) {
     return (
       <View style={[styles.row, ownAlign]}>
-        {replyLabel ? (
-          <Text style={[styles.replyLabel, { color: palette.text3 }]}>
-            {replyLabel}
-          </Text>
+        {repliedTo ? (
+          <RepliedPreview
+            label={replyLabel}
+            media={repliedMedia}
+            isOwn={isOwn}
+            repliedToIsOwn={repliedToIsOwn}
+            palette={palette}
+          />
         ) : null}
         {showSenderLabel ? (
           <Text style={[styles.senderLabel, { color: palette.text3 }]}>
@@ -182,9 +259,12 @@ function ContentHandler({
     );
   } else if (cnvs.mediaKind === 'image' && cnvs.imageURI) {
     bubbleVariant = 'image';
+    const imageUri = cnvs.imageURI;
     body = (
       <Pressable
-        onPress={() => onOpenMedia(cnvs.imageURI)}
+        onPress={() => onOpenImage(imageUri)}
+        onLongPress={onLongPress}
+        delayLongPress={350}
         style={({ pressed }) => [
           styles.imageBubble,
           {
@@ -222,6 +302,8 @@ function ContentHandler({
     body = (
       <Pressable
         onPress={() => onOpenMedia(cnvs.mediaURI)}
+        onLongPress={onLongPress}
+        delayLongPress={350}
         disabled={cnvs.pending}
         style={({ pressed }) => [
           styles.mediaCard,
@@ -247,19 +329,12 @@ function ContentHandler({
             },
           ]}
         >
-          <CLIcon
-            n={icon}
-            size={20}
-            color={isOwn ? '#fff' : palette.text2}
-          />
+          <CLIcon n={icon} size={20} color={isOwn ? '#fff' : palette.text2} />
         </View>
         <View style={styles.mediaCopy}>
           <Text
             numberOfLines={1}
-            style={[
-              styles.mediaName,
-              { color: isOwn ? '#fff' : palette.text },
-            ]}
+            style={[styles.mediaName, { color: isOwn ? '#fff' : palette.text }]}
           >
             {cnvs.fileName ?? 'Attachment'}
           </Text>
@@ -317,19 +392,34 @@ function ContentHandler({
 
   return (
     <View style={[styles.row, ownAlign]}>
-      {replyLabel ? (
-        <Text style={[styles.replyLabel, { color: palette.text3 }]}>
-          {replyLabel}
-        </Text>
+      {repliedTo ? (
+        <RepliedPreview
+          label={replyLabel}
+          media={repliedMedia}
+          isOwn={isOwn}
+          repliedToIsOwn={repliedToIsOwn}
+          palette={palette}
+        />
       ) : null}
       {showSenderLabel ? (
         <Text style={[styles.senderLabel, { color: palette.text3 }]}>
           {memberName(cnvs.sender)}
         </Text>
       ) : null}
-      {/* TODO(reply-preview): port ReplyingToPreview once the reply
-          flow has a composer on mobile. */}
-      {bubbleWrapStyle ? <View style={bubbleWrapStyle}>{body}</View> : body}
+      {bubbleWrapStyle ? (
+        <Pressable
+          onLongPress={onLongPress}
+          delayLongPress={350}
+          style={({ pressed }) => [
+            ...bubbleWrapStyle,
+            { opacity: cnvs.pending ? 0.7 : pressed ? 0.92 : 1 },
+          ]}
+        >
+          {body}
+        </Pressable>
+      ) : (
+        body
+      )}
       <View style={styles.metaRow}>
         <Text style={[styles.timeText, { color: palette.text3 }]}>
           {cnvs.pending ? 'Sending…' : cnvs.timeLabel}
@@ -374,6 +464,161 @@ function ContentHandler({
 }
 
 // ---- subcomponents ---------------------------------------------------------
+
+function RepliedPreview({
+  label,
+  media,
+  isOwn,
+  repliedToIsOwn,
+  palette,
+}: {
+  label: string | null;
+  /** Classified shape of the quoted message — see `repliedMedia` above
+   *  for the producer. `null` means "no reply context". */
+  media: {
+    kind: 'text' | 'image' | 'video' | 'audio' | 'file' | 'deleted';
+    snippet: string;
+    uri?: string;
+    fileName?: string;
+  } | null;
+  /** Alignment of the reply itself — right when the current user is
+   *  the replier, left otherwise. */
+  isOwn: boolean;
+  /** Author of the QUOTED message — drives the tint. Replying to your
+   *  own message uses the brand soft fill; replying to someone else's
+   *  stays on neutral surface. */
+  repliedToIsOwn: boolean;
+  palette: ReturnType<typeof useTheme>['palette'];
+}) {
+  if (!media) return null;
+
+  // Deleted-original branch: dashed tombstone bubble. Mirrors the
+  // main deleted-message render so users instantly recognize the
+  // state. No tint / no accent stripe — the dashed border + italic
+  // copy carry the signal on its own.
+  if (media.kind === 'deleted') {
+    return (
+      <View style={[styles.repliedWrap, isOwn ? styles.repliedAlignOwn : null]}>
+        {label ? (
+          <Text style={[styles.replyLabel, { color: palette.text3 }]}>
+            {label}
+          </Text>
+        ) : null}
+        <View
+          style={[
+            styles.repliedBubble,
+            styles.repliedDeleted,
+            { borderColor: palette.border2 },
+          ]}
+        >
+          <Text style={[styles.repliedDeletedText, { color: palette.text3 }]}>
+            {media.snippet}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Media replies (image / video / audio / file) drop the bubble
+  // container entirely and render the same visual as the actual
+  // message — just at reduced opacity to telegraph "quoted". Without
+  // a tap-to-jump affordance, showing the real attachment is the
+  // clearest cue for "this is what I'm replying to."
+  if (media.kind === 'image' && media.uri) {
+    return (
+      <View
+        style={[styles.repliedMediaWrap, isOwn ? styles.repliedAlignOwn : null]}
+      >
+        {label ? (
+          <Text style={[styles.replyLabel, { color: palette.text3 }]}>
+            {label}
+          </Text>
+        ) : null}
+        <Image
+          source={{ uri: media.uri }}
+          style={[
+            styles.repliedFullImage,
+            { backgroundColor: palette.surface2 },
+          ]}
+          resizeMode="cover"
+        />
+      </View>
+    );
+  }
+
+  if (
+    media.kind === 'video' ||
+    media.kind === 'audio' ||
+    media.kind === 'file'
+  ) {
+    const icon =
+      media.kind === 'video'
+        ? 'movie'
+        : media.kind === 'audio'
+        ? 'audiotrack'
+        : 'insert-drive-file';
+    const kindLabel =
+      media.kind === 'video'
+        ? 'Video'
+        : media.kind === 'audio'
+        ? 'Audio'
+        : 'Attachment';
+    return (
+      <View
+        style={[styles.repliedMediaWrap, isOwn ? styles.repliedAlignOwn : null]}
+      >
+        {label ? (
+          <Text style={[styles.replyLabel, { color: palette.text3 }]}>
+            {label}
+          </Text>
+        ) : null}
+        <View style={styles.repliedMediaFlat}>
+          <CLIcon n={icon} size={18} color={palette.text2} />
+          <Text
+            numberOfLines={1}
+            style={[styles.repliedMediaName, { color: palette.text2 }]}
+          >
+            {media.fileName ? `${kindLabel} · ${media.fileName}` : kindLabel}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Text / fallback branch — keep the bordered bubble since text
+  // needs a container to read as a quote.
+  const snippetColor = repliedToIsOwn ? palette.brand : palette.text2;
+  const accentColor = repliedToIsOwn ? palette.brand : palette.text3;
+  const surfaceStyle = repliedToIsOwn
+    ? {
+        backgroundColor: palette.brandSoft,
+        borderColor: palette.brand,
+      }
+    : {
+        backgroundColor: palette.surface2,
+        borderColor: palette.border,
+      };
+  return (
+    <View style={[styles.repliedWrap, isOwn ? styles.repliedAlignOwn : null]}>
+      {label ? (
+        <Text style={[styles.replyLabel, { color: palette.text3 }]}>
+          {label}
+        </Text>
+      ) : null}
+      <View style={[styles.repliedBubble, surfaceStyle]}>
+        <View
+          style={[styles.repliedAccent, { backgroundColor: accentColor }]}
+        />
+        <Text
+          numberOfLines={2}
+          style={[styles.repliedSnippet, { color: snippetColor }]}
+        >
+          {media.snippet || ' '}
+        </Text>
+      </View>
+    </View>
+  );
+}
 
 function SeenRow({
   isOwn,
@@ -465,6 +710,69 @@ const styles = StyleSheet.create({
 
   replyLabel: { fontSize: 11, fontStyle: 'italic' },
   senderLabel: { fontSize: 11, fontWeight: '600', marginLeft: 4 },
+
+  repliedWrap: {
+    alignSelf: 'flex-start',
+    maxWidth: '92%',
+    gap: 2,
+    // The quoted bubble sits "above and slightly behind" the actual
+    // reply — Messenger achieves this with a negative margin so the
+    // reply bubble overlaps the quoted card by a few px. Same idea
+    // here with marginBottom: -6 on the wrap.
+    marginBottom: -6,
+  },
+  repliedAlignOwn: { alignSelf: 'flex-end' },
+  repliedBubble: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderWidth: 1,
+    borderRadius: radii.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    paddingLeft: 0,
+    gap: 8,
+    maxWidth: 260,
+    minHeight: 32,
+  },
+  repliedAccent: {
+    width: 3,
+    borderTopLeftRadius: radii.sm,
+    borderBottomLeftRadius: radii.sm,
+  },
+  repliedSnippet: { flex: 1, fontSize: 12, lineHeight: 16 },
+  repliedDeleted: {
+    borderStyle: 'dashed',
+    backgroundColor: 'transparent',
+    paddingLeft: 10,
+  },
+  repliedDeletedText: {
+    flex: 1,
+    fontSize: 12,
+    fontStyle: 'italic',
+    lineHeight: 16,
+  },
+
+  // Container for media replies — no border / no background, just an
+  // alignment wrap + a reduced opacity so the actual media reads as
+  // a quote of the original message instead of a fresh attachment.
+  repliedMediaWrap: {
+    alignSelf: 'flex-start',
+    gap: 2,
+    marginBottom: -6,
+    opacity: 0.65,
+  },
+  repliedFullImage: {
+    width: 220,
+    height: 220,
+    borderRadius: radii.md,
+  },
+  repliedMediaFlat: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: 260,
+  },
+  repliedMediaName: { flex: 1, fontSize: 12, fontWeight: '600' },
 
   metaRow: {
     flexDirection: 'row',
