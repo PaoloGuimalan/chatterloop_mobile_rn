@@ -10,8 +10,6 @@
  *   - Pull-to-refresh
  *
  * Out of scope (TODOs):
- *   - Lazy pagination — webapp uses IntersectionObserver; replace with
- *     onEndReached + per-screen GetFeedRequest call when needed.
  *   - The web "feature card" empty banners (Diary / Map / Extension). */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -238,11 +236,40 @@ export default function Feed() {
         range: RANGE,
       });
       setPosts(response.results ?? []);
+      setPage(1);
+      setHasMore(Boolean(response.next));
       setIsLoading(false);
       setRefreshing(false);
     },
     [authentication.user.userID],
   );
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || isLoading || refreshing) return;
+    if (!authentication.user.userID) return;
+    setLoadingMore(true);
+    const nextPage = page + 1;
+    const response = await GetFeedRequest({
+      current_user_id: authentication.user.userID,
+      page: nextPage,
+      range: RANGE,
+    });
+    setPosts(prev => {
+      const seen = new Set(prev.map(p => p.post_id));
+      const fresh = (response.results ?? []).filter(p => !seen.has(p.post_id));
+      return [...prev, ...fresh];
+    });
+    setPage(nextPage);
+    setHasMore(Boolean(response.next));
+    setLoadingMore(false);
+  }, [
+    authentication.user.userID,
+    hasMore,
+    isLoading,
+    loadingMore,
+    page,
+    refreshing,
+  ]);
 
   useEffect(() => {
     load(false);
@@ -494,6 +521,15 @@ export default function Feed() {
               tintColor={palette.brand}
             />
           }
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.footerLoading}>
+                <ActivityIndicator color={palette.text3} />
+              </View>
+            ) : null
+          }
         />
       )}
 
@@ -511,6 +547,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   listContent: { padding: 12, gap: 8 },
+  footerLoading: { paddingVertical: 16, alignItems: 'center' },
 
   composeCard: {
     borderWidth: 1,

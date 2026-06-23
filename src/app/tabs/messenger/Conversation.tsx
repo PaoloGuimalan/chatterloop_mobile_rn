@@ -26,6 +26,7 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -60,6 +61,11 @@ import {
 import { pickImages } from '../../../reusables/hooks/imagePicker';
 import { generateUUID } from '../../../reusables/hooks/uuid';
 import { ConversationInfoModal } from './ConversationInfoModal';
+import ContentHandler from './partials/ContentHandler';
+import type {
+  IContact,
+  PaginationProp,
+} from '../../../reusables/vars/interfaces';
 
 interface ConversationParams {
   conversationID: string;
@@ -74,12 +80,27 @@ interface ConversationParams {
 
 const RANGE = 20;
 
-interface DisplayMessage {
+export interface ReplyedMessage {
+  sender: string;
+  content?: string;
+  messageType?: string;
+}
+
+export interface MessageReaction {
+  userID: string;
+  emoji: string;
+}
+
+export interface DisplayMessage {
   id: string;
   /** Server-assigned MongoDB ObjectID — monotonic, lexically sortable.
    *  Undefined for optimistic-pending bubbles (they have no _id yet). */
   _id?: string;
+  conversationID: string;
   messageID: string;
+  /** Raw sender userID — kept so the ContentHandler can pivot on
+   *  own/other without relying on `isOwn` alone. */
+  sender: string;
   /** True for the locally-authored side of the bubble (right-aligned). */
   isOwn: boolean;
   content: string;
@@ -87,12 +108,66 @@ interface DisplayMessage {
   /** Display time string ("Just now", "5 minutes ago", etc.). */
   timeLabel: string;
   seeners: string[];
+  /** Tombstone — webapp renders a dashed "Message deleted" bubble for
+   *  these instead of the regular text bubble. */
+  isDeleted?: boolean;
+  /** Reply context — passthrough from the server payload. */
+  isReply?: boolean;
+  replyedmessage?: ReplyedMessage[];
+  /** Reactions list — passthrough. ContentHandler renders a pill row
+   *  when populated. */
+  reactions?: MessageReaction[];
   /** True while the optimistic bubble is in flight. */
   pending?: boolean;
   pendingID?: string;
   /** Renderable image source for image-typed bubbles. Local data URL
    *  while the bubble is optimistic; persisted URL once SSE reloads. */
   imageURI?: string;
+  /** Resolved URL/data for non-text bubbles. Falls back from
+   *  `references[0].reference` to `content` if it looks like a URL. */
+  mediaURI?: string;
+  /** Coarse media bucket used to pick the bubble renderer. */
+  mediaKind?: 'image' | 'video' | 'audio' | 'file';
+  /** Display name shown on file/video/audio cards. */
+  fileName?: string;
+}
+
+function classifyMediaKind(
+  messageType: string,
+  referenceMediaType?: string,
+): DisplayMessage['mediaKind'] {
+  // text and notif have no media bucket; the renderer falls through to
+  // the text bubble below.
+  if (messageType === 'text' || messageType === 'notif') return undefined;
+  const haystack = `${messageType} ${referenceMediaType ?? ''}`.toLowerCase();
+  if (haystack.includes('image')) return 'image';
+  if (haystack.includes('video')) return 'video';
+  if (haystack.includes('audio')) return 'audio';
+  return 'file';
+}
+
+type ThreadRef = NonNullable<ThreadMessage['references']>[number];
+
+function deriveFileName(
+  m: ThreadMessage,
+  firstRef: ThreadRef | undefined,
+  kind: DisplayMessage['mediaKind'],
+): string | undefined {
+  // Prefer an explicit name on the reference; otherwise pull the last
+  // path segment off whatever URL we have. Falls back to a sensible
+  // kind-keyed label so the bubble always reads something useful.
+  const explicit = (firstRef as { name?: string } | undefined)?.name;
+  if (explicit) return explicit;
+  const url = firstRef?.reference ?? m.content;
+  if (url && !url.startsWith('data:')) {
+    const cleaned = url.split('?')[0];
+    const tail = cleaned.split('/').pop();
+    if (tail) return tail;
+  }
+  if (kind === 'video') return 'Video';
+  if (kind === 'audio') return 'Audio';
+  if (kind === 'file') return 'File';
+  return undefined;
 }
 
 function toDisplay(m: ThreadMessage, authUserID: string): DisplayMessage {
@@ -103,26 +178,54 @@ function toDisplay(m: ThreadMessage, authUserID: string): DisplayMessage {
       : d?.time
       ? `${d.date} · ${d.time}`
       : timeSince(d?.date ?? '');
-  // For image messages the server returns the persisted URL in
-  // `references[0].reference`; older/optimistic shapes may carry it
-  // in `content` as a data URL.
+  // For non-text messages the server returns the persisted URL in
+  // `references[0].reference`; optimistic bubbles may carry a data URL
+  // (or remote URL on confirmed-but-pre-reload server response) in
+  // `content` instead. mediaKind is the bucket the renderer switches
+  // on; imageURI is kept as a back-compat alias for the image branch.
   const firstRef = m.references?.[0];
-  const imageURI =
-    m.messageType === 'image' || firstRef?.referenceMediaType === 'image'
-      ? firstRef?.reference ??
-        (m.content?.startsWith('data:') ? m.content : undefined)
+  const mediaKind = classifyMediaKind(
+    m.messageType,
+    firstRef?.referenceMediaType,
+  );
+  let mediaURI: string | undefined;
+  if (mediaKind) {
+    const candidate = firstRef?.reference ?? m.content;
+    if (candidate) mediaURI = candidate;
+  }
+  const fileName =
+    mediaKind && mediaKind !== 'image'
+      ? deriveFileName(m, firstRef, mediaKind)
       : undefined;
+  const sender = m.sender ?? m.userID;
+  // Passthrough fields the backend may decorate onto messages once
+  // reply/reactions land; cast off the index signature here so the
+  // ContentHandler can read them with proper types downstream.
+  const passthrough = m as unknown as {
+    isReply?: boolean;
+    replyedmessage?: ReplyedMessage[];
+    reactions?: MessageReaction[];
+  };
   return {
     id: m._id ?? m.pendingID ?? `${m.conversationID}-${m.userID}-${timeLabel}`,
     _id: m._id,
+    conversationID: m.conversationID,
     messageID: m.messageID,
+    sender,
     isOwn: m.userID === authUserID || m.sender === authUserID,
-    content: m.isDeleted ? '[Deleted message]' : m.content,
+    content: m.content,
     messageType: m.messageType,
     timeLabel,
     seeners: m.seeners,
+    isDeleted: m.isDeleted === true,
+    isReply: passthrough.isReply === true,
+    replyedmessage: passthrough.replyedmessage,
+    reactions: passthrough.reactions,
     pendingID: m.pendingID,
-    imageURI,
+    imageURI: mediaKind === 'image' ? mediaURI : undefined,
+    mediaURI,
+    mediaKind,
+    fileName,
   };
 }
 
@@ -154,6 +257,28 @@ export default function Conversation() {
         conversationID: string;
         userID?: string;
       }[],
+  );
+  const contactslist = useSelector(
+    (s: AppState) => s.contactslist as PaginationProp<IContact>,
+  );
+
+  // userID → first-name resolver for the ContentHandler. We include
+  // the current user so own-messages can look up "you" naturally, and
+  // every contact from both directions (action_by / involved_user)
+  // so direction of original request doesn't matter.
+  const memberName = useCallback(
+    (userID: string): string => {
+      if (userID === me) {
+        return authentication.user.fullName?.firstName ?? 'You';
+      }
+      for (const c of contactslist.results ?? []) {
+        if (c.type !== 'single') continue;
+        if (c.action_by?.id === userID) return c.action_by.first_name;
+        if (c.involved_user?.id === userID) return c.involved_user.first_name;
+      }
+      return 'Someone';
+    },
+    [authentication.user.fullName?.firstName, contactslist.results, me],
   );
 
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
@@ -355,7 +480,9 @@ export default function Conversation() {
     const pendingID = generateUUID();
     const optimistic: DisplayMessage = {
       id: pendingID,
+      conversationID: params.conversationID,
       messageID: pendingID,
+      sender: me,
       isOwn: true,
       content: text,
       messageType: 'text',
@@ -386,7 +513,7 @@ export default function Conversation() {
     // SSE reload will replace the optimistic bubble with the
     // server-confirmed version (matched on pendingID).
     setIsAlreadyTyping(false);
-  }, [draft, params, sending]);
+  }, [draft, me, params, sending]);
 
   // 5-second typing cooldown — mirrors webapp. After the cooldown,
   // the next keystroke re-fires IsTypingBroadcastRequest so the other
@@ -418,7 +545,9 @@ export default function Conversation() {
     }));
     const optimistic: DisplayMessage[] = files.map(f => ({
       id: f.pendingID,
+      conversationID: params.conversationID,
       messageID: f.pendingID,
+      sender: me,
       isOwn: true,
       content: f.reference,
       messageType: 'image',
@@ -427,6 +556,8 @@ export default function Conversation() {
       pending: true,
       pendingID: f.pendingID,
       imageURI: f.reference,
+      mediaURI: f.reference,
+      mediaKind: 'image',
     }));
     setMessages(prev => sortNewestFirst([...optimistic, ...prev]));
     const ok = await SendFilesRequest({
@@ -442,7 +573,7 @@ export default function Conversation() {
       );
     }
     setAttaching(false);
-  }, [attaching, params.conversationID, params.receivers, params.type]);
+  }, [attaching, me, params.conversationID, params.receivers, params.type]);
 
   const onStartCall = useCallback(async () => {
     if (dialing || outgoing) return;
@@ -608,66 +739,27 @@ export default function Conversation() {
     t => t.conversationID === params.conversationID && t.userID !== me,
   );
 
+  const openMedia = useCallback((uri?: string) => {
+    if (!uri || uri.startsWith('data:')) return;
+    Linking.openURL(uri).catch(err =>
+      console.log('[Conversation.openMedia]', err),
+    );
+  }, []);
+
   const renderItem = useCallback(
-    ({ item }: { item: DisplayMessage }) => {
-      const isText =
-        item.messageType === 'text' || item.messageType === 'notif';
-      const isImage = item.messageType === 'image' && item.imageURI;
+    ({ item, index }: { item: DisplayMessage; index: number }) => {
       return (
-        <View
-          style={[styles.row, item.isOwn ? styles.rowOwn : styles.rowOther]}
-        >
-          {isImage ? (
-            <View
-              style={[
-                styles.imageBubble,
-                {
-                  backgroundColor: palette.surface2,
-                  opacity: item.pending ? 0.7 : 1,
-                },
-              ]}
-            >
-              <Image
-                source={{ uri: item.imageURI }}
-                style={styles.imageBubbleImg}
-                resizeMode="cover"
-              />
-            </View>
-          ) : (
-            <View
-              style={[
-                styles.bubble,
-                item.isOwn
-                  ? { backgroundColor: palette.brand }
-                  : {
-                      backgroundColor: palette.surface,
-                      borderColor: palette.border,
-                      borderWidth: 1,
-                    },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.bubbleText,
-                  {
-                    color: item.isOwn ? '#fff' : palette.text,
-                    opacity: item.pending ? 0.7 : 1,
-                  },
-                ]}
-              >
-                {isText ? item.content : `Sent ${item.messageType}`}
-              </Text>
-            </View>
-          )}
-          <View style={styles.bubbleMeta}>
-            <Text style={[styles.timeText, { color: palette.text3 }]}>
-              {item.pending ? 'Sending…' : item.timeLabel}
-            </Text>
-          </View>
-        </View>
+        <ContentHandler
+          cnvs={item}
+          i={index}
+          conversationType={params.type}
+          me={me}
+          memberName={memberName}
+          onOpenMedia={openMedia}
+        />
       );
     },
-    [palette],
+    [me, memberName, openMedia, params.type],
   );
 
   const hasAvatar = params.profile && params.profile !== 'none';
@@ -1007,18 +1099,6 @@ const styles = StyleSheet.create({
   headerSub: { fontSize: 11, marginTop: 1 },
 
   listContent: { padding: 12, gap: 4 },
-  row: { marginVertical: 2 },
-  rowOwn: { alignItems: 'flex-end' },
-  rowOther: { alignItems: 'flex-start' },
-  bubble: {
-    maxWidth: '80%',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: radii.md,
-  },
-  bubbleText: { fontSize: 14, lineHeight: 19 },
-  bubbleMeta: { marginTop: 2 },
-  timeText: { fontSize: 10.5 },
 
   empty: {
     flex: 1,
@@ -1082,14 +1162,5 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  imageBubble: {
-    maxWidth: '70%',
-    borderRadius: radii.md,
-    overflow: 'hidden',
-  },
-  imageBubbleImg: {
-    width: 220,
-    height: 220,
   },
 });

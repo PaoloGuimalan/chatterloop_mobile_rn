@@ -9,8 +9,7 @@
  *     "messages_list" events)
  *
  * Out of scope (TODOs):
- *   - Search / segment tabs / compose menu / create-group / create-server
- *   - Lazy pagination (webapp uses IntersectionObserver) */
+ *   - Search / segment tabs / compose menu / create-group / create-server */
 
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -226,6 +225,9 @@ export default function Messages() {
 
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const range = 20;
 
   const loadFirstPage = useCallback(
@@ -245,7 +247,11 @@ export default function Messages() {
           type: SET_MESSAGES_LIST,
           payload: { messageslist: response.conversationslist },
         });
+        setHasMore(Boolean(response.next));
+      } else {
+        setHasMore(false);
       }
+      setPage(1);
       setIsLoading(false);
       setRefreshing(false);
     },
@@ -260,6 +266,49 @@ export default function Messages() {
     setRefreshing(true);
     loadFirstPage(true);
   }, [loadFirstPage]);
+
+  // Append the next page on scroll-bottom. Dedupes by conversationID
+  // so an in-flight SSE override mid-paginate can't cause duplicate
+  // rows. messageslist read fresh from redux so the appended array
+  // always builds off the latest state, not a stale closure.
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || isLoading || refreshing) return;
+    setLoadingMore(true);
+    const nextPage = page + 1;
+    const response = await InitConversationListRequest(nextPage, range);
+    if (response) {
+      const incoming: Convo[] = response.conversationslist ?? [];
+      const seen = new Set(messageslist.map(c => c.conversationID));
+      const fresh = incoming.filter(c => !seen.has(c.conversationID));
+      if (fresh.length > 0) {
+        dispatch({
+          type: SET_PREVIEW_PARTICIPANTS_BULK,
+          payload: {
+            participants: fresh
+              .map(c => c.voice_participants ?? [])
+              .flat(),
+          },
+        });
+        dispatch({
+          type: SET_MESSAGES_LIST,
+          payload: { messageslist: [...messageslist, ...fresh] },
+        });
+      }
+      setHasMore(Boolean(response.next));
+      setPage(nextPage);
+    } else {
+      setHasMore(false);
+    }
+    setLoadingMore(false);
+  }, [
+    dispatch,
+    hasMore,
+    isLoading,
+    loadingMore,
+    messageslist,
+    page,
+    refreshing,
+  ]);
 
   const me = authentication.user.userID;
   const onOpenConversation = useCallback(
@@ -454,6 +503,15 @@ export default function Messages() {
               tintColor={palette.brand}
             />
           }
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.footerLoading}>
+                <ActivityIndicator color={palette.text3} />
+              </View>
+            ) : null
+          }
         />
       )}
     </SafeAreaView>
@@ -493,6 +551,7 @@ const styles = StyleSheet.create({
   },
   emptyText: { fontSize: 14, fontWeight: '600' },
   listContent: { paddingHorizontal: 8, paddingVertical: 4 },
+  footerLoading: { paddingVertical: 16, alignItems: 'center' },
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
