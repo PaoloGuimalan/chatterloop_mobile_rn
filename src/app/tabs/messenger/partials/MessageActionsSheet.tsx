@@ -40,6 +40,10 @@ interface Props {
   onClose: () => void;
   onReply: (cnvs: DisplayMessage) => void;
   onDelete: (cnvs: DisplayMessage) => void;
+  /** Tap a quick-reaction emoji — Conversation does the optimistic
+   *  swap of the user's existing reaction (if any) and fires
+   *  ReactToMessageRequest. */
+  onReact: (cnvs: DisplayMessage, emoji: string) => void;
 }
 
 const QUICK_REACTIONS = ['❤️', '😂', '😮', '😢', '😡', '👍'];
@@ -59,6 +63,7 @@ export default function MessageActionsSheet({
   onClose,
   onReply,
   onDelete,
+  onReact,
 }: Props) {
   const { palette } = useTheme();
 
@@ -115,7 +120,10 @@ export default function MessageActionsSheet({
             {QUICK_REACTIONS.map((e, idx) => (
               <Pressable
                 key={`${e}-${idx}`}
-                onPress={onClose}
+                onPress={() => {
+                  if (target) onReact(target, e);
+                  onClose();
+                }}
                 style={({ pressed }) => [
                   styles.reactionBtn,
                   { opacity: pressed ? 0.55 : 1 },

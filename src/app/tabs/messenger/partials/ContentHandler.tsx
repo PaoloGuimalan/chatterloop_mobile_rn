@@ -22,10 +22,12 @@
  *   - ReplyingToPreview ships as RepliedPreview below — a stacked
  *     mini-bubble above the reply showing the quoted sender + snippet,
  *     matching the Messenger pattern.
- *   - EmojiPickerHandler + ReactionsModal for adding/inspecting
- *     reactions. Display of existing reactions IS shown — just no
- *     add/remove affordance (the actions sheet's reaction row also
- *     dismisses without sending until that endpoint is wired).
+ *   - Full emoji picker (webapp uses emoji-picker-react). The
+ *     MessageActionsSheet ships 6 quick reactions wired to
+ *     ReactToMessageRequest; a long-tail picker for arbitrary emoji
+ *     can land later if needed.
+ *   - ReactionsModal listing who reacted with what — display of the
+ *     reaction pill is implemented; tap-to-inspect comes next cycle.
  *   - urlify + mention highlighting. Plain Text for v1.
  *
  * The component is a pure renderer — Conversation.tsx still owns

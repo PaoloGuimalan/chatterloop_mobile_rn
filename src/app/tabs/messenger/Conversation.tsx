@@ -54,6 +54,7 @@ import {
   EndCallRequest,
   InitConversationRequest,
   IsTypingBroadcastRequest,
+  ReactToMessageRequest,
   SeenMessageRequest,
   SendFilesRequest,
   SendMessageRequest,
@@ -787,6 +788,40 @@ export default function Conversation() {
     setActionTarget(cnvs);
   }, []);
 
+  // Optimistic reaction: swap out the user's previous reaction (if any)
+  // for the new emoji and dispatch ReactToMessageRequest. Tapping the
+  // same emoji again clears the user's reaction. Backend dedupes by
+  // userID — the SSE messages_list reload reconciles the canonical
+  // state if anything drifts.
+  const onReact = useCallback(
+    async (cnvs: DisplayMessage, emoji: string) => {
+      const existing = cnvs.reactions ?? [];
+      const mine = existing.find(r => r.userID === me);
+      const isToggleOff = mine?.emoji === emoji;
+      const nextReactions = isToggleOff
+        ? existing.filter(r => r.userID !== me)
+        : [
+            ...existing.filter(r => r.userID !== me),
+            { userID: me, emoji },
+          ];
+      setMessages(prev =>
+        prev.map(m =>
+          m.messageID === cnvs.messageID
+            ? { ...m, reactions: nextReactions }
+            : m,
+        ),
+      );
+      // Webapp's pattern is fire-and-forget — failures roll back on
+      // the next SSE reload rather than via a local rollback handler.
+      ReactToMessageRequest({
+        conversationID: cnvs.conversationID,
+        messageID: cnvs.messageID,
+        newreaction: { userID: me, emoji },
+      });
+    },
+    [me],
+  );
+
   const onOpenImage = useCallback((uri: string) => {
     if (uri.startsWith('data:')) {
       // Optimistic-pending bubbles still hold a data URL — RN's Image
@@ -1118,6 +1153,7 @@ export default function Conversation() {
         onClose={() => setActionTarget(null)}
         onReply={onReplyTo}
         onDelete={onDelete}
+        onReact={onReact}
       />
 
       <ImageLightbox

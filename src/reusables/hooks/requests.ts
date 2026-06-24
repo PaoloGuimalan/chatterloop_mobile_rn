@@ -1832,6 +1832,31 @@ export const ActiveContactsRequest = async (dispatch: Dispatch<any>) => {
 
 // ---- Message-level helpers -------------------------------------------------
 
+/** Reacts to a single message with an emoji. Payload mirrors webapp's
+ *  EmojiPickerHandler: `newreaction` is `{ userID, emoji, ...rest }`.
+ *  Backend dedupes by userID — a second call from the same user
+ *  swaps their existing reaction. Fire-and-forget on the client;
+ *  optimistic update is done at the call site. */
+export const ReactToMessageRequest = async (params: {
+  conversationID: string;
+  messageID: string;
+  newreaction: { userID: string; emoji: string; [k: string]: unknown };
+}): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const encoded = sign(params, SECRET);
+    const response = await Axios.post(
+      `${API}/m/addreaction`,
+      { token: encoded },
+      { headers: { 'x-access-token': token } },
+    );
+    return Boolean(response.data?.status ?? true);
+  } catch (err) {
+    console.log('[ReactToMessageRequest]', err);
+    return false;
+  }
+};
+
 /** Soft-deletes a message by ID. Webapp signs the {conversationID,
  *  messageID} payload as a JWT then POSTs to `/m/deletemessage`. The
  *  backend flips `isDeleted` on the row and broadcasts `messages_list`
