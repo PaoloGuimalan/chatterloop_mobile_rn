@@ -468,7 +468,9 @@ export default function Profile() {
           otherInfo.coverphoto !== ''
             ? otherInfo.coverphoto
             : null,
-        badged: !!(otherInfo?.isBadged || otherInfo?.isVerified),
+        // `isVerified` is just email verification (true for everyone) —
+        // the blue badge is gated on `isBadged`, matching Feed/Search.
+        badged: !!otherInfo?.isBadged,
       }
     : {
         fullName: ownerFullName,

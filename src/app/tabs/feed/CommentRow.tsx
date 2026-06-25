@@ -48,8 +48,11 @@ export function CommentRow({
   const { palette } = useTheme();
   const navigation = useNavigation<any>();
   const openProfile = useCallback(
-    (username: string) =>
-      navigation.navigate('UserProfile', { userID: username }),
+    (username?: string) => {
+      // Guard against an empty handle so we never push a dead profile.
+      if (!username) return;
+      navigation.navigate('UserProfile', { userID: username });
+    },
     [navigation],
   );
   const [expanded, setExpanded] = useState(false);
@@ -187,6 +190,7 @@ export function CommentRow({
           <View style={styles.commentHead}>
             <Text
               numberOfLines={1}
+              onPress={() => openProfile(comment.user.username)}
               style={[styles.commentAuthor, { color: palette.text }]}
             >
               {authorName(comment.user)}
@@ -255,6 +259,7 @@ export function CommentRow({
                       <View style={styles.commentHead}>
                         <Text
                           numberOfLines={1}
+                          onPress={() => openProfile(child.user.username)}
                           style={[styles.replyAuthor, { color: palette.text }]}
                         >
                           {authorName(child.user)}
