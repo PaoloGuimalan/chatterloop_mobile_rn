@@ -39,8 +39,13 @@ import {
   FeedPost,
   GetDiaryTotalRequest,
   GetPostRequest,
+  GetSavedPostsRequest,
   LogoutRequest,
+  SavedPost,
 } from '../../../reusables/hooks/requests';
+import PostOptionsSheet, {
+  PostChange,
+} from './user/PostOptionsSheet';
 import { timeSince } from '../../../reusables/hooks/reusable';
 import { pickImages } from '../../../reusables/hooks/imagePicker';
 import {
@@ -72,6 +77,17 @@ export default function Profile() {
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Profile post sections — mirrors the webapp's Posts / Saved / Archives
+  // tabs (PostsContainer / SavesContainer / ArchivesContainer).
+  type Segment = 'posts' | 'saved' | 'archived';
+  const [segment, setSegment] = useState<Segment>('posts');
+  const [saved, setSaved] = useState<SavedPost[]>([]);
+  const [savedLoaded, setSavedLoaded] = useState(false);
+  const [archived, setArchived] = useState<FeedPost[]>([]);
+  const [archivedLoaded, setArchivedLoaded] = useState(false);
+  const [sectionLoading, setSectionLoading] = useState(false);
+  const [optionsTarget, setOptionsTarget] = useState<FeedPost | null>(null);
   const [uploadingTarget, setUploadingTarget] = useState<
     null | 'cover_photo' | 'profile'
   >(null);
@@ -207,6 +223,76 @@ export default function Profile() {
     load(true);
   }, [load]);
 
+  const loadSaved = useCallback(async () => {
+    setSectionLoading(true);
+    const response = await GetSavedPostsRequest({ page: 1, range: 20 });
+    setSaved(response.results ?? []);
+    setSavedLoaded(true);
+    setSectionLoading(false);
+  }, []);
+
+  const loadArchived = useCallback(async () => {
+    if (!user.userID) return;
+    setSectionLoading(true);
+    const response = await GetPostRequest({
+      current_user_id: user.userID,
+      userID: user.username,
+      page: 1,
+      range: RANGE,
+      archive: true,
+    });
+    setArchived(response.results ?? []);
+    setArchivedLoaded(true);
+    setSectionLoading(false);
+  }, [user.userID, user.username]);
+
+  // Lazily fetch a section the first time it's opened.
+  const onSelectSegment = useCallback(
+    (next: Segment) => {
+      setSegment(next);
+      if (next === 'saved' && !savedLoaded) loadSaved();
+      if (next === 'archived' && !archivedLoaded) loadArchived();
+    },
+    [savedLoaded, archivedLoaded, loadSaved, loadArchived],
+  );
+
+  // Apply a post-options change to whichever section list holds it.
+  const onPostChanged = useCallback((change: PostChange, post: FeedPost) => {
+    const id = post.post_id;
+    if (change === 'deleted') {
+      setPosts(prev => prev.filter(p => p.post_id !== id));
+      setArchived(prev => prev.filter(p => p.post_id !== id));
+      setSaved(prev => prev.filter(s => s.post.post_id !== id));
+      return;
+    }
+    if (change === 'archived') {
+      // Leaves the Posts grid, joins Archives.
+      setPosts(prev => prev.filter(p => p.post_id !== id));
+      setArchived(prev =>
+        prev.some(p => p.post_id === id)
+          ? prev
+          : [{ ...post, is_archived: true }, ...prev],
+      );
+      return;
+    }
+    if (change === 'unarchived') {
+      setArchived(prev => prev.filter(p => p.post_id !== id));
+      setPosts(prev =>
+        prev.some(p => p.post_id === id)
+          ? prev
+          : [{ ...post, is_archived: false }, ...prev],
+      );
+      return;
+    }
+    if (change === 'unsaved') {
+      setSaved(prev => prev.filter(s => s.post.post_id !== id));
+    }
+    const isSaved = change === 'saved';
+    setPosts(prev =>
+      prev.map(p => (p.post_id === id ? { ...p, is_saved: isSaved } : p)),
+    );
+  }, []);
+
   const hasAvatar = user?.profile && user.profile !== 'none';
   const hasCover =
     user?.coverphoto && user.coverphoto !== 'none' && user.coverphoto !== '';
@@ -236,10 +322,14 @@ export default function Profile() {
           post_id: item.post_id,
           post: item,
         });
+      // Long-press surfaces the post options (save / archive / delete),
+      // mirroring the webapp's PostOptions affordance on each tile.
+      const openOptions = () => setOptionsTarget(item);
       if (imageRef) {
         return (
           <Pressable
             onPress={openComments}
+            onLongPress={openOptions}
             style={({ pressed }) => [
               styles.tile,
               {
@@ -261,6 +351,7 @@ export default function Profile() {
       return (
         <Pressable
           onPress={openComments}
+          onLongPress={openOptions}
           style={({ pressed }) => [
             styles.tile,
             styles.tileText,
@@ -282,6 +373,66 @@ export default function Profile() {
       );
     },
     [nav, palette, tileSize],
+  );
+
+  const renderSavedRow = useCallback(
+    ({ item }: { item: SavedPost }) => {
+      const p = item.post;
+      const author = p.user;
+      const middle =
+        author.middle_name && author.middle_name !== 'N/A'
+          ? ` ${author.middle_name}`
+          : '';
+      const name = `${author.first_name}${middle} ${author.last_name}`.trim();
+      const authorHasAvatar = author.profile && author.profile !== 'none';
+      return (
+        <Pressable
+          onPress={() =>
+            nav.navigate('PostDetail', { post_id: p.post_id })
+          }
+          style={({ pressed }) => [
+            styles.savedRow,
+            {
+              backgroundColor: palette.surface,
+              borderColor: palette.border,
+              opacity: pressed ? 0.75 : 1,
+            },
+          ]}
+        >
+          {authorHasAvatar ? (
+            <Image source={{ uri: author.profile }} style={styles.savedAvatar} />
+          ) : (
+            <View
+              style={[
+                styles.savedAvatar,
+                styles.avatarFallback,
+                { backgroundColor: palette.brandSoft },
+              ]}
+            >
+              <Text style={[styles.savedInitial, { color: palette.brand }]}>
+                {author.first_name.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
+          <View style={styles.savedBody}>
+            <Text
+              numberOfLines={1}
+              style={[styles.savedName, { color: palette.text }]}
+            >
+              {name}
+            </Text>
+            <Text
+              numberOfLines={2}
+              style={[styles.savedCaption, { color: palette.text2 }]}
+            >
+              {p.caption || 'Media post'}
+            </Text>
+          </View>
+          <CLIcon n="bookmark" size={18} color={palette.brand} />
+        </Pressable>
+      );
+    },
+    [nav, palette],
   );
 
   const ListHeader = (
@@ -454,7 +605,43 @@ export default function Profile() {
         </Pressable>
       </View>
 
-      <Text style={[styles.sectionLabel, { color: palette.text3 }]}>POSTS</Text>
+      <View style={styles.segmentRow}>
+        {(
+          [
+            { key: 'posts', icon: 'grid-view', label: 'Posts' },
+            { key: 'saved', icon: 'bookmark', label: 'Saved' },
+            { key: 'archived', icon: 'inventory-2', label: 'Archived' },
+          ] as { key: Segment; icon: string; label: string }[]
+        ).map(seg => {
+          const active = segment === seg.key;
+          return (
+            <Pressable
+              key={seg.key}
+              onPress={() => onSelectSegment(seg.key)}
+              style={[
+                styles.segmentBtn,
+                {
+                  backgroundColor: active ? palette.brandSoft : 'transparent',
+                },
+              ]}
+            >
+              <CLIcon
+                n={seg.icon}
+                size={17}
+                color={active ? palette.brand : palette.text3}
+              />
+              <Text
+                style={[
+                  styles.segmentLabel,
+                  { color: active ? palette.brand : palette.text3 },
+                ]}
+              >
+                {seg.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 
@@ -471,39 +658,75 @@ export default function Profile() {
           </View>
         </ScrollView>
       ) : (
-        <FlatList
-          data={posts}
-          keyExtractor={(p, i) => p.post_id ?? `post-${i}`}
-          renderItem={renderPost}
-          numColumns={3}
-          columnWrapperStyle={styles.columnWrapper}
-          contentContainerStyle={styles.listContent}
-          ListHeaderComponent={ListHeader}
-          ListEmptyComponent={
-            <View
-              style={[
-                styles.empty,
-                {
-                  backgroundColor: palette.surface,
-                  borderColor: palette.border,
-                },
-              ]}
-            >
-              <CLIcon n="article" size={28} color={palette.text3} />
-              <Text style={[styles.emptyText, { color: palette.text3 }]}>
-                No posts yet
-              </Text>
-            </View>
-          }
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={palette.brand}
+        (() => {
+          const gridMode = segment !== 'saved';
+          const data = (
+            segment === 'posts'
+              ? posts
+              : segment === 'archived'
+              ? archived
+              : saved
+          ) as ReadonlyArray<FeedPost | SavedPost>;
+          const emptyCopy =
+            segment === 'saved'
+              ? 'No saved posts'
+              : segment === 'archived'
+              ? 'No archived posts'
+              : 'No posts yet';
+          return (
+            <FlatList
+              key={gridMode ? 'grid' : 'list'}
+              data={data as any[]}
+              keyExtractor={(item: any, i) =>
+                (gridMode ? item.post_id : item.id) ?? `row-${i}`
+              }
+              renderItem={(gridMode ? renderPost : renderSavedRow) as any}
+              numColumns={gridMode ? 3 : 1}
+              columnWrapperStyle={gridMode ? styles.columnWrapper : undefined}
+              contentContainerStyle={
+                gridMode ? styles.listContent : styles.savedListContent
+              }
+              ListHeaderComponent={ListHeader}
+              ListEmptyComponent={
+                sectionLoading ? (
+                  <View style={styles.center}>
+                    <ActivityIndicator color={palette.brand} />
+                  </View>
+                ) : (
+                  <View
+                    style={[
+                      styles.empty,
+                      {
+                        backgroundColor: palette.surface,
+                        borderColor: palette.border,
+                      },
+                    ]}
+                  >
+                    <CLIcon n="article" size={28} color={palette.text3} />
+                    <Text style={[styles.emptyText, { color: palette.text3 }]}>
+                      {emptyCopy}
+                    </Text>
+                  </View>
+                )
+              }
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  tintColor={palette.brand}
+                />
+              }
             />
-          }
-        />
+          );
+        })()
       )}
+
+      <PostOptionsSheet
+        target={optionsTarget}
+        me={user.userID}
+        onClose={() => setOptionsTarget(null)}
+        onChanged={onPostChanged}
+      />
     </SafeAreaView>
   );
 }
@@ -613,6 +836,39 @@ const styles = StyleSheet.create({
     marginTop: 18,
     marginBottom: 8,
   },
+
+  segmentRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 18,
+    marginBottom: 10,
+    paddingHorizontal: 2,
+  },
+  segmentBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: radii.md,
+  },
+  segmentLabel: { fontSize: 12.5, fontWeight: '700' },
+
+  savedListContent: { paddingHorizontal: 16, paddingBottom: 32, gap: 8 },
+  savedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderRadius: radii.md,
+  },
+  savedAvatar: { width: 42, height: 42, borderRadius: radii.pill },
+  savedInitial: { fontSize: 15, fontWeight: '700' },
+  savedBody: { flex: 1, minWidth: 0, gap: 2 },
+  savedName: { fontSize: 14, fontWeight: '700' },
+  savedCaption: { fontSize: 12.5, lineHeight: 17 },
 
   tile: {
     borderRadius: radii.sm,

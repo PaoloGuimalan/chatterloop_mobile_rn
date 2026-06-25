@@ -303,7 +303,14 @@ export default function Feed() {
             { backgroundColor: palette.surface, borderColor: palette.border },
           ]}
         >
-          <View style={styles.postHeader}>
+          <Pressable
+            style={styles.postHeader}
+            onPress={() =>
+              navigation.navigate('UserProfile', {
+                userID: item.user.username,
+              })
+            }
+          >
             {hasProfile ? (
               <Image
                 source={{ uri: item.user.profile }}
@@ -338,7 +345,7 @@ export default function Feed() {
                 @{item.user.username} · {timeSince(item.date_posted)}
               </Text>
             </View>
-          </View>
+          </Pressable>
 
           {item.caption ? (
             <Text style={[styles.postCaption, { color: palette.text }]}>

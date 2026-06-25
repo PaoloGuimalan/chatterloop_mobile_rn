@@ -18,11 +18,16 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 
 import { useTheme } from '../../../reusables/design/ThemeProvider';
-import { CLIcon, IconBtn } from '../../../reusables/design/primitives';
+import { Btn, CLIcon, IconBtn } from '../../../reusables/design/primitives';
 import { radii } from '../../../reusables/design/tokens';
-import { ServerDetails, ServerMember } from '../../../reusables/hooks/requests';
+import {
+  RealmManageInfo,
+  ServerDetails,
+  ServerMember,
+} from '../../../reusables/hooks/requests';
 
 interface Props {
   visible: boolean;
@@ -44,8 +49,31 @@ function memberInitial(m: ServerMember): string {
 
 export function ServerInfoModal({ visible, onClose, details }: Props) {
   const { palette } = useTheme();
+  const navigation = useNavigation<any>();
   const members = details.usersWithInfo ?? [];
   const hasAvatar = details.profile && details.profile !== 'N/A';
+
+  // Build the realm payload the management screen expects from the
+  // server details, then close the modal before navigating.
+  const openManage = () => {
+    const realm: RealmManageInfo = {
+      id: details.serverID,
+      realm_id: details.serverID,
+      type: 'server',
+      name: details.serverName,
+      slug: null,
+      description: null,
+      email: null,
+      profile: details.profile ?? null,
+      cover_photo: null,
+      is_private: !!details.privacy,
+      is_verified: false,
+      is_admin: !!details.is_admin,
+      parent: null,
+    };
+    onClose();
+    navigation.navigate('ManageRealm', { realm });
+  };
 
   return (
     <Modal
@@ -119,6 +147,16 @@ export function ServerInfoModal({ visible, onClose, details }: Props) {
                 </View>
               ) : null}
             </View>
+            {details.is_admin ? (
+              <Btn
+                size="sm"
+                variant="soft"
+                iconL="settings"
+                label="Manage server"
+                onPress={openManage}
+                style={styles.manageBtn}
+              />
+            ) : null}
           </View>
 
           <Text style={[styles.sectionLabel, { color: palette.text3 }]}>
@@ -221,6 +259,7 @@ const styles = StyleSheet.create({
   bannerInitial: { fontSize: 32, fontWeight: '800' },
   bannerName: { fontSize: 17, fontWeight: '700' },
   chipRow: { flexDirection: 'row', gap: 6 },
+  manageBtn: { marginTop: 10 },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -2,7 +2,7 @@
 /* Register — mirrors webapp/src/app/auth/Register.tsx (mobile-first).
  * Calls RegisterRequest. */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -21,10 +21,13 @@ import { useTheme } from '../../reusables/design/ThemeProvider';
 import { SET_ALERTS } from '../../redux/types';
 import type { AppState } from '../../redux/store';
 import {
+  GetCurrentPoliciesRequest,
   RegisterRequest,
+  type PolicyDocument,
   type RegisterPayload,
 } from '../../reusables/hooks/requests';
 import { checkIfValid } from '../../reusables/hooks/reusable';
+import DocumentViewerModal from '../widgets/DocumentViewerModal';
 
 const MONTHS = [
   'January',
@@ -59,6 +62,31 @@ export default function Register() {
   const [password, setPassword] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // Legal documents shown inline via DocumentViewerModal (mirrors webapp
+  // Register). Fetched once on mount; `activeDoc` drives the viewer.
+  const [policies, setPolicies] = useState<PolicyDocument[]>([]);
+  const [activeDoc, setActiveDoc] = useState<{
+    title: string;
+    content?: string;
+    url?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    GetCurrentPoliciesRequest().then(setPolicies);
+  }, []);
+
+  const openPolicy = useCallback(
+    (documentType: string, title: string) => {
+      const doc = policies.find(d => d.document_type === documentType);
+      setActiveDoc({
+        title,
+        content: doc?.content,
+        url: doc?.document_url,
+      });
+    },
+    [policies],
+  );
 
   const maxBirthDate = useMemo(() => new Date(), []);
 
@@ -242,7 +270,20 @@ export default function Register() {
           {agreed ? <CLIcon n="check" size={14} color="#fff" /> : null}
         </View>
         <Text style={{ color: palette.text2, fontSize: 13 }}>
-          I agree to the Terms and Conditions
+          I agree to the{' '}
+          <Text
+            style={{ color: palette.brand, fontWeight: '700' }}
+            onPress={() => openPolicy('terms', 'Terms and Conditions')}
+          >
+            Terms and Conditions
+          </Text>{' '}
+          and{' '}
+          <Text
+            style={{ color: palette.brand, fontWeight: '700' }}
+            onPress={() => openPolicy('privacy', 'Privacy Policy')}
+          >
+            Privacy Policy
+          </Text>
         </Text>
       </Pressable>
 
@@ -267,6 +308,14 @@ export default function Register() {
           </Text>
         </Pressable>
       </View>
+
+      <DocumentViewerModal
+        visible={activeDoc !== null}
+        title={activeDoc?.title ?? ''}
+        content={activeDoc?.content}
+        url={activeDoc?.url}
+        onClose={() => setActiveDoc(null)}
+      />
     </ScrollView>
   );
 }

@@ -944,6 +944,7 @@ export interface FeedPost {
   user_reaction: number | string | null;
   is_shared?: boolean;
   is_saved?: boolean;
+  is_archived?: boolean;
 }
 
 export interface FeedPage {
@@ -1089,6 +1090,143 @@ export const GetPostRequest = async (params: {
   } catch (err) {
     console.log('[GetPostRequest]', err);
     return EMPTY_FEED_PAGE;
+  }
+};
+
+// ---- Post actions (save / archive / delete) --------------------------------
+
+/** A row from GET /api/newsfeed/saves. The saved endpoint nests the
+ *  post metadata under `post` and does NOT inline media references — the
+ *  full post (with media) is fetched on demand via GetPostPreviewRequest
+ *  when the user opens it. Mirrors webapp ISavedPost. */
+export interface SavedPost {
+  id: string;
+  saved_at: string;
+  user: string;
+  post: {
+    post_id: string;
+    caption: string;
+    content_type: string;
+    file_type: string;
+    is_archived: boolean;
+    date_posted: string;
+    user: {
+      id: string;
+      username: string;
+      first_name: string;
+      middle_name?: string;
+      last_name: string;
+      profile: string;
+      is_badged?: boolean;
+    };
+  };
+}
+
+export interface SavedPostPage {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: SavedPost[];
+}
+
+const EMPTY_SAVED_PAGE: SavedPostPage = {
+  count: 0,
+  next: null,
+  previous: null,
+  results: [],
+};
+
+/** GET /api/newsfeed/saves — paged list of the viewer's saved posts. */
+export const GetSavedPostsRequest = async (params: {
+  page: number;
+  range: number;
+}): Promise<SavedPostPage> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.get(
+      `${USER_SERVICE_API}/api/newsfeed/saves?page=${params.page}&page_size=${params.range}`,
+      { headers: { 'x-access-token': token } },
+    );
+    return response.data ?? EMPTY_SAVED_PAGE;
+  } catch (err) {
+    console.log('[GetSavedPostsRequest]', err);
+    return EMPTY_SAVED_PAGE;
+  }
+};
+
+/** POST /api/newsfeed/saves — bookmark a post. */
+export const SavePostRequest = async (postID: string): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.post(
+      `${USER_SERVICE_API}/api/newsfeed/saves`,
+      { post_id: postID },
+      { headers: { 'x-access-token': token } },
+    );
+    return response.data?.status !== false;
+  } catch (err) {
+    console.log('[SavePostRequest]', err);
+    return false;
+  }
+};
+
+/** DELETE /api/newsfeed/saves — remove a bookmark. */
+export const UnsavePostRequest = async (postID: string): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.delete(
+      `${USER_SERVICE_API}/api/newsfeed/saves`,
+      {
+        data: { post_id: postID },
+        headers: { 'x-access-token': token },
+      },
+    );
+    return response.data?.status !== false;
+  } catch (err) {
+    console.log('[UnsavePostRequest]', err);
+    return false;
+  }
+};
+
+/** DELETE /api/newsfeed/default — permanently delete the viewer's posts. */
+export const DeletePostRequest = async (
+  postIDs: string[],
+): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.delete(
+      `${USER_SERVICE_API}/api/newsfeed/default`,
+      {
+        data: { post_ids: postIDs },
+        headers: { 'x-access-token': token },
+      },
+    );
+    await clearViewPosts();
+    return response.data?.status !== false;
+  } catch (err) {
+    console.log('[DeletePostRequest]', err);
+    return false;
+  }
+};
+
+/** PUT /api/newsfeed/default — patch post fields. Used to toggle archive
+ *  state via `{ is_archived }`. */
+export const UpdatePostRequest = async (
+  postID: string,
+  fields: Record<string, unknown>,
+): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.put(
+      `${USER_SERVICE_API}/api/newsfeed/default`,
+      { post_id: postID, fields },
+      { headers: { 'x-access-token': token } },
+    );
+    await clearViewPosts();
+    return response.data?.status !== false;
+  } catch (err) {
+    console.log('[UpdatePostRequest]', err);
+    return false;
   }
 };
 
@@ -1957,6 +2095,569 @@ export const EndCallRequest = async (params: {
     );
   } catch (err) {
     console.log('[EndCallRequest]', err);
+  }
+};
+
+// ---- Search / contacts -----------------------------------------------------
+
+/** User shape returned by GET /api/user/search/:q — mirrors the webapp's
+ *  UserSearchResult (src/reusables/vars/interfaces.ts). */
+export interface UserSearchResult {
+  id: string;
+  username: string;
+  first_name: string;
+  middle_name: string;
+  last_name: string;
+  birthdate: string;
+  profile: string;
+  gender: string;
+  email: string;
+  date_created: string;
+  is_active: boolean;
+  is_verified: boolean;
+  has_connection: boolean;
+  connection_accomplished: boolean;
+  connection_id: string | null;
+  is_action_by_user: boolean;
+}
+
+/** GET /api/user/search/:q — paged people search. Mirrors webapp
+ *  SearchRequest; returns the raw `results` array via callback. */
+export const SearchRequest = async (
+  params: { searchdata: string },
+  dispatch: Dispatch<any>,
+  setisLoading: (v: boolean) => void,
+  currentAlertState: AlertEntry[],
+  setsearchresults: (r: UserSearchResult[]) => void,
+) => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.get(
+      `${USER_SERVICE_API}/api/user/search/${encodeURIComponent(
+        params.searchdata,
+      )}/?page=1&page_size=10`,
+      { headers: { 'x-access-token': token } },
+    );
+    setsearchresults(response.data.results ?? []);
+  } catch (err: any) {
+    setsearchresults([]);
+    pushAlert(
+      dispatch,
+      currentAlertState,
+      'error',
+      err?.message ?? 'Search failed.',
+    );
+  } finally {
+    setisLoading(false);
+  }
+};
+
+/** POST /api/user/contacts — send a connection request. Mirrors webapp
+ *  ContactRequest. `addUsername` carries the target user id/username per
+ *  the backend contract. */
+export const ContactRequest = async (
+  params: { addUsername: string },
+  dispatch: Dispatch<any>,
+  currentAlertState: AlertEntry[],
+  setisDisabledByRequest: (v: boolean) => void,
+) => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.post(
+      `${USER_SERVICE_API}/api/user/contacts`,
+      params,
+      { headers: { 'x-access-token': token } },
+    );
+    pushAlert(
+      dispatch,
+      currentAlertState,
+      response.data?.status ? 'success' : 'warning',
+      response.data?.message,
+    );
+  } catch (err: any) {
+    pushAlert(
+      dispatch,
+      currentAlertState,
+      'error',
+      err?.message ?? 'Request failed.',
+    );
+  } finally {
+    setisDisabledByRequest(false);
+  }
+};
+
+// ---- Blocked accounts ------------------------------------------------------
+
+export interface BlockedAccount {
+  id: string;
+  username: string;
+  first_name: string;
+  last_name: string;
+  profile: string;
+  created_at: string;
+}
+
+/** GET /api/user/blocks — list accounts the user has blocked. */
+export const ListBlockedUsersRequest = async (): Promise<BlockedAccount[]> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.get(`${USER_SERVICE_API}/api/user/blocks`, {
+      headers: { 'x-access-token': token },
+    });
+    return response.data?.status ? response.data.data : [];
+  } catch (err) {
+    console.log('[ListBlockedUsersRequest]', err);
+    return [];
+  }
+};
+
+/** POST /api/user/blocks — block a user. Returns success boolean. */
+export const BlockUserRequest = async (
+  userId: string,
+  dispatch: Dispatch<any>,
+  currentAlertState: AlertEntry[],
+  setisWaitingRequest: (v: boolean) => void,
+): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.post(
+      `${USER_SERVICE_API}/api/user/blocks`,
+      { user_id: userId },
+      { headers: { 'x-access-token': token } },
+    );
+    pushAlert(
+      dispatch,
+      currentAlertState,
+      response.data?.status ? 'success' : 'warning',
+      response.data?.message,
+    );
+    return !!response.data?.status;
+  } catch (err: any) {
+    pushAlert(
+      dispatch,
+      currentAlertState,
+      'error',
+      err?.message ?? 'Request failed.',
+    );
+    return false;
+  } finally {
+    setisWaitingRequest(false);
+  }
+};
+
+/** DELETE /api/user/blocks — unblock a user. Returns success boolean. */
+export const UnblockUserRequest = async (
+  userId: string,
+  dispatch: Dispatch<any>,
+  currentAlertState: AlertEntry[],
+  setisWaitingRequest: (v: boolean) => void,
+): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.delete(
+      `${USER_SERVICE_API}/api/user/blocks`,
+      {
+        data: { user_id: userId },
+        headers: { 'x-access-token': token },
+      },
+    );
+    pushAlert(
+      dispatch,
+      currentAlertState,
+      response.data?.status ? 'success' : 'warning',
+      response.data?.message,
+    );
+    return !!response.data?.status;
+  } catch (err: any) {
+    pushAlert(
+      dispatch,
+      currentAlertState,
+      'error',
+      err?.message ?? 'Request failed.',
+    );
+    return false;
+  } finally {
+    setisWaitingRequest(false);
+  }
+};
+
+// ---- Data & privacy --------------------------------------------------------
+
+/** GET /api/user/me/export — fetch the full account export payload. On
+ *  web this triggers a file download; on native we hand the JSON string
+ *  back to the caller (which writes/share-sheets it). Returns the
+ *  serialized export, or null on failure. */
+export const ExportAccountDataRequest = async (
+  dispatch: Dispatch<any>,
+  currentAlertState: AlertEntry[],
+  setisWaitingRequest: (v: boolean) => void,
+): Promise<string | null> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.get(
+      `${USER_SERVICE_API}/api/user/me/export`,
+      { headers: { 'x-access-token': token } },
+    );
+    if (response.data?.status) {
+      return JSON.stringify(response.data.data, null, 2);
+    }
+    pushAlert(dispatch, currentAlertState, 'warning', response.data?.message);
+    return null;
+  } catch (err: any) {
+    pushAlert(
+      dispatch,
+      currentAlertState,
+      'error',
+      err?.message ?? 'Export failed.',
+    );
+    return null;
+  } finally {
+    setisWaitingRequest(false);
+  }
+};
+
+/** DELETE /api/user/me — permanently deactivate the account, then sign
+ *  the user out (mirrors webapp DeleteAccountRequest). */
+export const DeleteAccountRequest = async (
+  dispatch: Dispatch<any>,
+  currentAlertState: AlertEntry[],
+  setisWaitingRequest: (v: boolean) => void,
+) => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.delete(`${USER_SERVICE_API}/api/user/me`, {
+      headers: { 'x-access-token': token },
+    });
+    if (response.data?.status) {
+      await LogoutRequest(dispatch);
+    } else {
+      pushAlert(dispatch, currentAlertState, 'warning', response.data?.message);
+    }
+  } catch (err: any) {
+    pushAlert(
+      dispatch,
+      currentAlertState,
+      'error',
+      err?.message ?? 'Request failed.',
+    );
+  } finally {
+    setisWaitingRequest(false);
+  }
+};
+
+// ---- Group chat ------------------------------------------------------------
+
+/** POST /u/createContactGroupChat — create a group conversation. Mirrors
+ *  webapp CreateGroupChatRequest: a signed token carrying the group name,
+ *  privacy flag, and member ids. Returns success boolean. */
+export const CreateGroupChatRequest = async (params: {
+  groupName: string;
+  privacy: boolean;
+  otherUsers: string[];
+}): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const encoded = sign(params, SECRET);
+    const response = await Axios.post(
+      `${API}/u/createContactGroupChat`,
+      { token: encoded },
+      { headers: { 'x-access-token': token } },
+    );
+    return response.data?.status === true;
+  } catch (err) {
+    console.log('[CreateGroupChatRequest]', err);
+    return false;
+  }
+};
+
+// ---- Policies --------------------------------------------------------------
+
+export interface PolicyDocument {
+  document_type: string;
+  version: string;
+  content: string;
+  document_url: string;
+  effective_date: string;
+}
+
+/** GET /api/user/policies — current legal documents (terms, privacy).
+ *  Public endpoint; no auth header required. Mirrors webapp
+ *  GetCurrentPoliciesRequest. */
+export const GetCurrentPoliciesRequest = async (): Promise<
+  PolicyDocument[]
+> => {
+  try {
+    const response = await Axios.get(`${USER_SERVICE_API}/api/user/policies`);
+    return response.data?.status ? (response.data.data as PolicyDocument[]) : [];
+  } catch (err) {
+    console.log('[GetCurrentPoliciesRequest]', err);
+    return [];
+  }
+};
+
+// ---- Realm management ------------------------------------------------------
+
+/** Full realm/page profile as returned by GET /api/user/auth/<id>/ for an
+ *  admin. Mirrors webapp IRealmProfileInfo — the fields the manage screen
+ *  reads and edits. */
+export interface RealmManageInfo {
+  id: string;
+  realm_id: string;
+  type: string;
+  name: string;
+  slug: string | null;
+  description: string | null;
+  email: string | null;
+  profile: string | null;
+  cover_photo: string | null;
+  is_private: boolean;
+  is_verified: boolean;
+  is_admin: boolean;
+  parent: { id: string; name: string } | null;
+  [k: string]: unknown;
+}
+
+interface RealmAccountPreview {
+  id: string;
+  username: string;
+  first_name: string;
+  middle_name?: string;
+  last_name: string;
+  profile: string;
+}
+
+export interface RealmMember {
+  member_id: string;
+  realm: string;
+  role: string;
+  date_joined: string;
+  account: RealmAccountPreview;
+}
+
+export interface RealmFollower {
+  follow_id: string;
+  realm_id: string;
+  created_at: string;
+  follower: RealmAccountPreview;
+}
+
+interface RealmPaginated<T> {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: T[];
+}
+
+function emptyRealmPage<T>(): RealmPaginated<T> {
+  return { count: 0, next: null, previous: null, results: [] };
+}
+
+/** PUT /api/realm/my-list — patch realm fields (name/description/slug/
+ *  privacy/email). Throws "Slug already exists" so the caller can flag
+ *  the slug field, mirroring webapp UpdateRealmRequest. */
+export const UpdateRealmRequest = async (
+  realmID: string,
+  fields: Record<string, unknown>,
+): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.put(
+      `${USER_SERVICE_API}/api/realm/my-list`,
+      { realm_id: realmID, fields },
+      { headers: { 'x-access-token': token } },
+    );
+    return !!response.data;
+  } catch (err: any) {
+    const body = err?.response?.data;
+    if (typeof body === 'string' && body.includes('duplicate key')) {
+      throw new Error('Slug already exists');
+    }
+    throw err;
+  }
+};
+
+/** POST /realms/upload-media — multipart upload of a realm profile/cover
+ *  image. Native sends the picked file by uri (FormData) rather than a
+ *  browser File. Returns the new media URL or null. */
+export const UpdateRealmMediaRequest = async (payload: {
+  realm_id: string;
+  realm_type: string;
+  media_type: 'profile' | 'cover_photo';
+  uri: string;
+  name: string;
+  mime: string;
+}): Promise<{ media_type: string; url: string } | null> => {
+  try {
+    const token = await getItem('authtoken');
+    const form = new FormData();
+    form.append('realm_id', payload.realm_id);
+    form.append('realm_type', payload.realm_type);
+    form.append('media_type', payload.media_type);
+    form.append('image', {
+      uri: payload.uri,
+      name: payload.name,
+      type: payload.mime,
+    } as unknown as Blob);
+    const response = await Axios.post(
+      `${API}/realms/upload-media`,
+      form,
+      {
+        headers: {
+          'x-access-token': token,
+          'Content-Type': 'multipart/form-data',
+        },
+      },
+    );
+    return response.data?.status ? response.data.details : null;
+  } catch (err) {
+    console.log('[UpdateRealmMediaRequest]', err);
+    return null;
+  }
+};
+
+/** GET /api/realm/members — paged realm member roster. */
+export const GetRealmMembersRequest = async (
+  realmID: string,
+  page: number,
+  range: number,
+  search?: string | null,
+): Promise<RealmPaginated<RealmMember>> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.get(`${USER_SERVICE_API}/api/realm/members`, {
+      headers: { 'x-access-token': token },
+      params: { realm_id: realmID, page, page_size: range, search },
+    });
+    return response.data ?? emptyRealmPage<RealmMember>();
+  } catch (err) {
+    console.log('[GetRealmMembersRequest]', err);
+    return emptyRealmPage<RealmMember>();
+  }
+};
+
+/** GET /api/realm/realm-followers — paged follower list (pages only). */
+export const GetRealmFollowersRequest = async (
+  realmID: string,
+  page: number,
+  range: number,
+  search?: string | null,
+): Promise<RealmPaginated<RealmFollower>> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.get(
+      `${USER_SERVICE_API}/api/realm/realm-followers`,
+      {
+        headers: { 'x-access-token': token },
+        params: { realm_id: realmID, page, page_size: range, search },
+      },
+    );
+    return response.data ?? emptyRealmPage<RealmFollower>();
+  } catch (err) {
+    console.log('[GetRealmFollowersRequest]', err);
+    return emptyRealmPage<RealmFollower>();
+  }
+};
+
+/** DELETE /api/realm/realm-followers — drop a follower. */
+export const RemoveRealmFollowersRequest = async (
+  realmID: string,
+  followID: string,
+): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.delete(
+      `${USER_SERVICE_API}/api/realm/realm-followers`,
+      {
+        data: { realm_id: realmID, follow_id: followID },
+        headers: { 'x-access-token': token },
+      },
+    );
+    return !!response.data;
+  } catch (err) {
+    console.log('[RemoveRealmFollowersRequest]', err);
+    return false;
+  }
+};
+
+/** DELETE /realms/remove-user — remove members from a realm. */
+export const RemoveRealmMemberRequest = async (
+  realmID: string,
+  accountIDs: string[],
+): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.delete(`${API}/realms/remove-user`, {
+      data: { realm_id: realmID, account_ids: accountIDs },
+      headers: { 'x-access-token': token },
+    });
+    return !!response.data?.status;
+  } catch (err) {
+    console.log('[RemoveRealmMemberRequest]', err);
+    return false;
+  }
+};
+
+/** PUT /s/update-member-realm-role — promote/demote a member. */
+export const UpdateMemberRoleRequest = async (
+  realmID: string,
+  memberID: string,
+  newRole: string,
+): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const response = await Axios.put(
+      `${API}/s/update-member-realm-role`,
+      { realm_id: realmID, member_id: memberID, new_role: newRole },
+      { headers: { 'x-access-token': token } },
+    );
+    return !!response.data?.status;
+  } catch (err) {
+    console.log('[UpdateMemberRoleRequest]', err);
+    return false;
+  }
+};
+
+/** POST /m/addnewmember — add contacts to a (non-server) realm. Mirrors
+ *  webapp AddNewMemberRequest: a signed token payload. */
+export const AddNewMemberRequest = async (payload: {
+  conversationID: string;
+  memberstoadd: { id: string; userID: string; fullName: string }[];
+  receivers: string[];
+}): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const encoded = sign(payload, SECRET);
+    const response = await Axios.post(
+      `${API}/m/addnewmember`,
+      { token: encoded },
+      { headers: { 'x-access-token': token } },
+    );
+    return !!response.data?.status;
+  } catch (err) {
+    console.log('[AddNewMemberRequest]', err);
+    return false;
+  }
+};
+
+/** POST /s/addnewmembertoserver — server variant of AddNewMemberRequest.
+ *  Mirrors webapp AddNewMemberToServer (signed token). */
+export const AddNewMemberToServer = async (payload: {
+  serverID: string;
+  memberstoadd: { id: string; userID: string; fullName: string }[];
+  receivers: string[];
+}): Promise<boolean> => {
+  try {
+    const token = await getItem('authtoken');
+    const encoded = sign(payload, SECRET);
+    const response = await Axios.post(
+      `${API}/s/addnewmembertoserver`,
+      { token: encoded },
+      { headers: { 'x-access-token': token } },
+    );
+    return !!response.data?.status;
+  } catch (err) {
+    console.log('[AddNewMemberToServer]', err);
+    return false;
   }
 };
 

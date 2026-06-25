@@ -31,6 +31,9 @@ import PostDetail from "./tabs/feed/PostDetail";
 import Diary from "./tabs/profile/diary/Diary";
 import NewDiaryEntry from "./tabs/profile/diary/NewEntry";
 import DiaryEntryView from "./tabs/profile/diary/EntryView";
+import Search from "./tabs/search/Search";
+import ManageRealm from "./tabs/realms/ManageRealm";
+import UserProfile from "./tabs/profile/UserProfile";
 
 import type { AppState } from "../redux/store";
 import {
@@ -142,7 +145,10 @@ export default function Root() {
             <Stack.Screen name="ServerDetail" component={ServerDetail} />
             <Stack.Screen name="Pages" component={Pages} />
             <Stack.Screen name="PageDetail" component={PageDetail} />
+            <Stack.Screen name="ManageRealm" component={ManageRealm} />
+            <Stack.Screen name="UserProfile" component={UserProfile} />
             <Stack.Screen name="Conversation" component={Conversation} />
+            <Stack.Screen name="Search" component={Search} />
             <Stack.Screen name="PostDetail" component={PostDetail} />
             <Stack.Screen name="Comments" component={Comments} />
             <Stack.Screen name="Diary" component={Diary} />

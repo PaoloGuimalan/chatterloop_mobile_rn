@@ -28,8 +28,9 @@ import { useNavigation } from '@react-navigation/native';
 
 import type { AppState } from '../../../redux/store';
 import { useTheme } from '../../../reusables/design/ThemeProvider';
-import { CLIcon } from '../../../reusables/design/primitives';
+import { CLIcon, IconBtn } from '../../../reusables/design/primitives';
 import { radii } from '../../../reusables/design/tokens';
+import CreateGroupChatModal from './CreateGroupChatModal';
 import { isUserOnline, timeSince } from '../../../reusables/hooks/reusable';
 import { InitConversationListRequest } from '../../../reusables/hooks/requests';
 import {
@@ -228,6 +229,7 @@ export default function Messages() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const range = 20;
 
   const loadFirstPage = useCallback(
@@ -477,6 +479,12 @@ export default function Messages() {
         <Text style={[styles.titleText, { color: palette.text }]}>
           Messages
         </Text>
+        <IconBtn
+          n="group-add"
+          iconSize={22}
+          color={palette.brand}
+          onPress={() => setCreateGroupOpen(true)}
+        />
       </View>
 
       {showInitialLoader ? (
@@ -514,6 +522,12 @@ export default function Messages() {
           }
         />
       )}
+
+      <CreateGroupChatModal
+        visible={createGroupOpen}
+        onClose={() => setCreateGroupOpen(false)}
+        onCreated={() => loadFirstPage(true)}
+      />
     </SafeAreaView>
   );
 }

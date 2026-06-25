@@ -41,6 +41,7 @@ import {
   FollowRealmRequest,
   GetPostRequest,
   GetProfileInfoRequest,
+  RealmManageInfo,
   UnfollowRealmRequest,
 } from '../../../reusables/hooks/requests';
 import { useFeedReactions } from '../../../reusables/hooks/useFeedReactions';
@@ -97,12 +98,16 @@ export default function PageDetail() {
   // the realm profile object — fetched on mount below.
   const [following, setFollowing] = useState<boolean>(!!params.isFollowing);
   const [followBusy, setFollowBusy] = useState(false);
+  // Full realm profile — drives the admin "Manage" affordance. Only
+  // populated for admins via is_admin on the fetched info object.
+  const [realmInfo, setRealmInfo] = useState<RealmManageInfo | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     GetProfileInfoRequest(params.slug).then(info => {
       if (cancelled || !info) return;
       setFollowing(!!info.is_follower);
+      setRealmInfo(info as unknown as RealmManageInfo);
     });
     return () => {
       cancelled = true;
@@ -466,15 +471,28 @@ export default function PageDetail() {
             </Text>
           ) : null}
         </View>
-        <Btn
-          size="sm"
-          variant={following ? 'outline' : 'primary'}
-          label={following ? 'Following' : 'Follow'}
-          iconL={following ? 'check' : 'add'}
-          disabled={followBusy}
-          onPress={onToggleFollow}
-          style={styles.followBtn}
-        />
+        <View style={styles.bannerActions}>
+          {realmInfo?.is_admin ? (
+            <Btn
+              size="sm"
+              variant="soft"
+              label="Manage"
+              iconL="settings"
+              onPress={() =>
+                navigation.navigate('ManageRealm', { realm: realmInfo })
+              }
+            />
+          ) : null}
+          <Btn
+            size="sm"
+            variant={following ? 'outline' : 'primary'}
+            label={following ? 'Following' : 'Follow'}
+            iconL={following ? 'check' : 'add'}
+            disabled={followBusy}
+            onPress={onToggleFollow}
+            style={styles.followBtn}
+          />
+        </View>
       </View>
       {following ? (
         <Pressable
@@ -623,6 +641,7 @@ const styles = StyleSheet.create({
   bannerName: { fontSize: 17, fontWeight: '800' },
   bannerDesc: { fontSize: 12.5, textAlign: 'center', lineHeight: 17 },
   followBtn: { marginTop: 6, minWidth: 130 },
+  bannerActions: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
 
   pageComposer: {
     marginTop: 16,

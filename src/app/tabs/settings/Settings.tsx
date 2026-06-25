@@ -25,6 +25,8 @@ import PersonalInformation from "./section/PersonalInformation";
 import Credentials from "./section/Credentials";
 import MapFeedSettings from "./section/MapFeedSettings";
 import ArchivedMessages from "./section/ArchivedMessages";
+import BlockedAccounts from "./section/BlockedAccounts";
+import DataPrivacy from "./section/DataPrivacy";
 
 interface SettingsItem {
   key: string;
@@ -77,6 +79,23 @@ export default function Settings() {
             description: "Configure your account privacy settings.",
             isDisabled: true,
             source: null,
+          },
+          {
+            key: "data-privacy",
+            icon: "shield",
+            name: "Data & Privacy",
+            description:
+              "Export a copy of your data or permanently delete your account.",
+            isDisabled: false,
+            source: "webapp/src/app/tabs/settings/section/DataPrivacy.tsx",
+          },
+          {
+            key: "blocked-accounts",
+            icon: "block",
+            name: "Blocked Accounts",
+            description: "Manage accounts you've blocked.",
+            isDisabled: false,
+            source: "webapp/src/app/tabs/settings/section/BlockedAccounts.tsx",
           },
         ],
       },
@@ -145,6 +164,12 @@ export default function Settings() {
         break;
       case "archives":
         sectionBody = <ArchivedMessages />;
+        break;
+      case "data-privacy":
+        sectionBody = <DataPrivacy />;
+        break;
+      case "blocked-accounts":
+        sectionBody = <BlockedAccounts />;
         break;
       default:
         sectionBody = (

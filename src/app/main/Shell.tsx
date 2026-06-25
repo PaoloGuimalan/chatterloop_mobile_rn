@@ -77,6 +77,13 @@ function Header({ onLogout }: { onLogout: () => void }) {
       </Text>
       <View style={{ flex: 1 }} />
       <Pressable
+        onPress={() => navigation.navigate('Search')}
+        hitSlop={6}
+        style={({ pressed }) => [styles.bellBtn, { opacity: pressed ? 0.6 : 1 }]}
+      >
+        <CLIcon n="search" size={22} color={palette.text2} />
+      </Pressable>
+      <Pressable
         onPress={() => navigation.navigate('Notifications')}
         hitSlop={6}
         style={({ pressed }) => [

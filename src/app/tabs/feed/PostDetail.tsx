@@ -51,6 +51,9 @@ import { pickImages } from '../../../reusables/hooks/imagePicker';
 import { useFeedReactions } from '../../../reusables/hooks/useFeedReactions';
 import { persistViewPost } from '../../../reusables/hooks/viewcache';
 import { CommentRow } from './CommentRow';
+import PostOptionsSheet, {
+  PostChange,
+} from '../profile/user/PostOptionsSheet';
 
 interface PostDetailParams {
   post_id: string;
@@ -121,6 +124,27 @@ export default function PostDetail() {
   const [sending, setSending] = useState(false);
   const [attachment, setAttachment] = useState<string | null>(null);
   const [pickingAttachment, setPickingAttachment] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+
+  const onPostChanged = useCallback(
+    (change: PostChange) => {
+      if (change === 'deleted') {
+        nav.goBack();
+        return;
+      }
+      // Reflect save/archive toggles on the header card in place.
+      setPosts(prev =>
+        prev.map(p => {
+          if (change === 'saved') return { ...p, is_saved: true };
+          if (change === 'unsaved') return { ...p, is_saved: false };
+          if (change === 'archived') return { ...p, is_archived: true };
+          if (change === 'unarchived') return { ...p, is_archived: false };
+          return p;
+        }),
+      );
+    },
+    [nav],
+  );
 
   useEffect(() => {
     if (seedPost) return;
@@ -270,7 +294,12 @@ export default function PostDetail() {
           { backgroundColor: palette.surface, borderColor: palette.border },
         ]}
       >
-        <View style={styles.postHeader}>
+        <Pressable
+          style={styles.postHeader}
+          onPress={() =>
+            nav.navigate('UserProfile', { userID: post.user.username })
+          }
+        >
           {hasProfile ? (
             <Image
               source={{ uri: post.user.profile }}
@@ -305,7 +334,7 @@ export default function PostDetail() {
               @{post.user.username} · {timeSince(post.date_posted)}
             </Text>
           </View>
-        </View>
+        </Pressable>
 
         {post.caption ? (
           <Text style={[styles.postCaption, { color: palette.text }]}>
@@ -405,6 +434,14 @@ export default function PostDetail() {
           onPress={() => nav.goBack()}
         />
         <Text style={[styles.headerTitle, { color: palette.text }]}>Post</Text>
+        {post ? (
+          <IconBtn
+            n="more-horiz"
+            iconSize={22}
+            color={palette.text}
+            onPress={() => setOptionsOpen(true)}
+          />
+        ) : null}
       </View>
 
       <KeyboardAvoidingView
@@ -560,6 +597,15 @@ export default function PostDetail() {
         onClose={() => setPopoverPostId(null)}
         onPick={onPickFromPopover}
       />
+
+      {optionsOpen && post ? (
+        <PostOptionsSheet
+          target={post}
+          me={myUserID}
+          onClose={() => setOptionsOpen(false)}
+          onChanged={onPostChanged}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }

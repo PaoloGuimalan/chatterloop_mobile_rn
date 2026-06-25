@@ -33,13 +33,14 @@
  * The component is a pure renderer — Conversation.tsx still owns
  * viewport tracking (seen-on-view), the directory lookup, and theme. */
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '../../../../reusables/design/ThemeProvider';
 import { CLIcon } from '../../../../reusables/design/primitives';
 import { radii } from '../../../../reusables/design/tokens';
 import type { DisplayMessage } from '../Conversation';
+import ReactionsModal from '../ReactionsModal';
 
 interface Props {
   cnvs: DisplayMessage;
@@ -77,6 +78,7 @@ function ContentHandler({
   onLongPressMessage,
 }: Props) {
   const { palette } = useTheme();
+  const [reactionsOpen, setReactionsOpen] = useState(false);
 
   // Long-press → floating action sheet. Notif and pending bubbles
   // intentionally have no actions — they can't be replied to or
@@ -427,18 +429,19 @@ function ContentHandler({
           {cnvs.pending ? 'Sending…' : cnvs.timeLabel}
         </Text>
         {reactionsBucket ? (
-          <View
-            style={[
+          <Pressable
+            onPress={() => setReactionsOpen(true)}
+            style={({ pressed }) => [
               styles.reactionPill,
               {
                 backgroundColor: palette.surface2,
                 borderColor: palette.border,
+                opacity: pressed ? 0.7 : 1,
               },
             ]}
           >
-            {/* TODO(reactions): wire EmojiPickerHandler + ReactionsModal
-                once the message-reaction endpoint is ported. Display
-                ships now; add/remove comes with the wiring. */}
+            {/* Tap to inspect who reacted with what. Add/remove is driven
+                from the long-press action sheet's quick-reactions row. */}
             <Text style={[styles.reactionText, { color: palette.text }]}>
               {reactionsBucket
                 .slice(0, 4)
@@ -450,9 +453,17 @@ function ContentHandler({
                 +{reactionsBucket.length - 4}
               </Text>
             ) : null}
-          </View>
+          </Pressable>
         ) : null}
       </View>
+
+      {reactionsBucket ? (
+        <ReactionsModal
+          visible={reactionsOpen}
+          reactions={reactionsBucket}
+          onClose={() => setReactionsOpen(false)}
+        />
+      ) : null}
       {showSeenBy ? (
         <SeenRow
           isOwn={isOwn}

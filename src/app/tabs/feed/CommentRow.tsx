@@ -15,6 +15,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 
 import { useTheme } from '../../../reusables/design/ThemeProvider';
 import { CLIcon } from '../../../reusables/design/primitives';
@@ -45,6 +46,12 @@ export function CommentRow({
   authAvailable: boolean;
 }) {
   const { palette } = useTheme();
+  const navigation = useNavigation<any>();
+  const openProfile = useCallback(
+    (username: string) =>
+      navigation.navigate('UserProfile', { userID: username }),
+    [navigation],
+  );
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<PostComment[]>([]);
   const [childCount, setChildCount] = useState<number | null>(null);
@@ -164,7 +171,9 @@ export function CommentRow({
 
   return (
     <View style={styles.commentRow}>
-      {renderAvatar(comment.user, 36)}
+      <Pressable onPress={() => openProfile(comment.user.username)}>
+        {renderAvatar(comment.user, 36)}
+      </Pressable>
       <View style={styles.commentBody}>
         <View
           style={[
@@ -230,7 +239,9 @@ export function CommentRow({
             ) : (
               children.map((child) => (
                 <View key={child.comment_id} style={styles.replyRow}>
-                  {renderAvatar(child.user, 28)}
+                  <Pressable onPress={() => openProfile(child.user.username)}>
+                    {renderAvatar(child.user, 28)}
+                  </Pressable>
                   <View style={styles.replyBody}>
                     <View
                       style={[

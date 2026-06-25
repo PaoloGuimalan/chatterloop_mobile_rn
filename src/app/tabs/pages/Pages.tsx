@@ -30,6 +30,7 @@ import { radii } from '../../../reusables/design/tokens';
 import {
   GetFollowRealmRequest,
   GetMyRealmsRequest,
+  RealmManageInfo,
   RealmProfileInfo,
 } from '../../../reusables/hooks/requests';
 import { CreatePageModal } from './CreatePageModal';
@@ -69,6 +70,9 @@ export default function Pages() {
     ({ item }: { item: RealmProfileInfo }) => {
       const hasAvatar = item.profile && item.profile !== 'N/A';
       const initial = item.name.charAt(0).toUpperCase();
+      // Mirrors webapp GenericRealmItem: admins get a Manage shortcut into
+      // the realm management screen.
+      const isAdmin = !!(item as { is_admin?: boolean }).is_admin;
       return (
         <Pressable
           onPress={() =>
@@ -122,6 +126,20 @@ export default function Pages() {
             >
               {item.description}
             </Text>
+          ) : null}
+          {isAdmin ? (
+            <Btn
+              size="sm"
+              variant="soft"
+              iconL="settings"
+              label="Manage"
+              onPress={() =>
+                navigation.navigate('ManageRealm', {
+                  realm: item as unknown as RealmManageInfo,
+                })
+              }
+              style={styles.manageBtn}
+            />
           ) : null}
         </Pressable>
       );
@@ -298,4 +316,5 @@ const styles = StyleSheet.create({
   avatarInitial: { fontSize: 22, fontWeight: '800' },
   tileName: { fontSize: 13, fontWeight: '700', textAlign: 'center' },
   tileDesc: { fontSize: 11, textAlign: 'center', lineHeight: 14 },
+  manageBtn: { marginTop: 4, alignSelf: 'stretch' },
 });
