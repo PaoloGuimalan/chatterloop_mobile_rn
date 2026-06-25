@@ -33,7 +33,9 @@ import NewDiaryEntry from "./tabs/profile/diary/NewEntry";
 import DiaryEntryView from "./tabs/profile/diary/EntryView";
 import Search from "./tabs/search/Search";
 import ManageRealm from "./tabs/realms/ManageRealm";
-import UserProfile from "./tabs/profile/UserProfile";
+// The visitor profile reuses the unified Profile component (owner-only
+// controls are filtered out when a `userID` param is present).
+import Profile from "./tabs/profile/Profile";
 
 import type { AppState } from "../redux/store";
 import {
@@ -146,7 +148,7 @@ export default function Root() {
             <Stack.Screen name="Pages" component={Pages} />
             <Stack.Screen name="PageDetail" component={PageDetail} />
             <Stack.Screen name="ManageRealm" component={ManageRealm} />
-            <Stack.Screen name="UserProfile" component={UserProfile} />
+            <Stack.Screen name="UserProfile" component={Profile} />
             <Stack.Screen name="Conversation" component={Conversation} />
             <Stack.Screen name="Search" component={Search} />
             <Stack.Screen name="PostDetail" component={PostDetail} />

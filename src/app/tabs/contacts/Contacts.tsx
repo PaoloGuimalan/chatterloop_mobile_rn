@@ -19,6 +19,7 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
+  Pressable,
   RefreshControl,
   StyleSheet,
   Text,
@@ -114,6 +115,12 @@ export default function Contacts() {
 
       return (
         <View style={styles.row}>
+          <Pressable
+            style={styles.rowMain}
+            onPress={() =>
+              navigation.navigate('UserProfile', { userID: item.username })
+            }
+          >
           <View style={styles.avatarWrap}>
             {hasProfile ? (
               <Image source={{ uri: item.profile }} style={styles.avatar} />
@@ -158,6 +165,7 @@ export default function Contacts() {
               {online ? 'Active now' : `@${item.username}`}
             </Text>
           </View>
+          </Pressable>
           <View style={styles.actions}>
             <IconBtn
               n="forum"
@@ -177,6 +185,7 @@ export default function Contacts() {
                   title: `${item.firstName}${middle} ${item.lastName}`,
                   profile: hasProfile ? item.profile : undefined,
                   receivers: [item.id],
+                  username: item.username,
                 });
               }}
             />
@@ -301,6 +310,7 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: radii.md,
   },
+  rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
   avatarWrap: { position: 'relative' },
   avatar: { width: 46, height: 46, borderRadius: radii.pill },
   avatarFallback: { alignItems: 'center', justifyContent: 'center' },

@@ -12,7 +12,7 @@
  * receiver isn't in your contacts (rare on group chats), the row
  * falls back to "Member" so the modal still renders cleanly. */
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Image,
   Modal,
@@ -24,11 +24,16 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSelector } from 'react-redux';
+import { useNavigation } from '@react-navigation/native';
 
 import type { AppState } from '../../../redux/store';
 import { useTheme } from '../../../reusables/design/ThemeProvider';
-import { CLIcon, IconBtn } from '../../../reusables/design/primitives';
+import { Btn, CLIcon, IconBtn } from '../../../reusables/design/primitives';
 import { radii } from '../../../reusables/design/tokens';
+import {
+  GetProfileInfoRequest,
+  RealmManageInfo,
+} from '../../../reusables/hooks/requests';
 import type {
   IContact,
   PaginationProp,
@@ -68,10 +73,41 @@ export function ConversationInfoModal({
   receivers,
 }: Props) {
   const { palette } = useTheme();
+  const navigation = useNavigation<any>();
   const contacts = useSelector(
     (s: AppState) => s.contactslist as PaginationProp<IContact>,
   );
   const me = useSelector((s: AppState) => s.authentication.user.userID);
+
+  // For group chats, look up the backing realm so admins get a Manage
+  // shortcut (the conversationID doubles as the group realm id, matching
+  // how AddNewMemberRequest addresses non-server realms).
+  const [groupRealm, setGroupRealm] = useState<RealmManageInfo | null>(null);
+  useEffect(() => {
+    if (!visible || type !== 'group') {
+      setGroupRealm(null);
+      return;
+    }
+    let cancelled = false;
+    GetProfileInfoRequest(conversationID).then(info => {
+      if (!cancelled) setGroupRealm((info as unknown as RealmManageInfo) ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, type, conversationID]);
+
+  const openProfile = (username: string | null) => {
+    if (!username) return;
+    onClose();
+    navigation.navigate('UserProfile', { userID: username });
+  };
+
+  const openManageGroup = () => {
+    if (!groupRealm) return;
+    onClose();
+    navigation.navigate('ManageRealm', { realm: groupRealm });
+  };
 
   // Build a userID→display lookup from the contacts list. The contact
   // record stores the "other party" under either `action_by` or
@@ -177,6 +213,16 @@ export function ConversationInfoModal({
             >
               {conversationID}
             </Text>
+            {type === 'group' && groupRealm?.is_admin ? (
+              <Btn
+                size="sm"
+                variant="soft"
+                iconL="settings"
+                label="Manage group"
+                onPress={openManageGroup}
+                style={styles.manageBtn}
+              />
+            ) : null}
           </View>
 
           <Text style={[styles.sectionLabel, { color: palette.text3 }]}>
@@ -200,8 +246,10 @@ export function ConversationInfoModal({
           ) : (
             <View style={styles.memberList}>
               {members.map((m) => (
-                <View
+                <Pressable
                   key={m.id}
+                  disabled={!m.username}
+                  onPress={() => openProfile(m.username)}
                   style={[
                     styles.memberRow,
                     {
@@ -246,7 +294,7 @@ export function ConversationInfoModal({
                       </Text>
                     ) : null}
                   </View>
-                </View>
+                </Pressable>
               ))}
             </View>
           )}
@@ -298,6 +346,7 @@ const styles = StyleSheet.create({
   },
   kindText: { fontSize: 11, fontWeight: '700' },
   cidText: { fontSize: 10, fontWeight: '600', marginTop: 4 },
+  manageBtn: { marginTop: 10 },
 
   sectionLabel: {
     fontSize: 11,

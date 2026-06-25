@@ -95,6 +95,7 @@ export default function Search() {
         title: name,
         profile: result.profile !== 'none' ? result.profile : undefined,
         receivers: [result.id],
+        username: result.username,
       });
     },
     [navigation],
@@ -228,6 +229,12 @@ export default function Search() {
             { backgroundColor: palette.surface, borderColor: palette.border },
           ]}
         >
+          <Pressable
+            style={styles.rowMain}
+            onPress={() =>
+              navigation.navigate('UserProfile', { userID: item.username })
+            }
+          >
           {hasAvatar ? (
             <Image source={{ uri: item.profile }} style={styles.avatar} />
           ) : (
@@ -264,11 +271,12 @@ export default function Search() {
               @{item.username}
             </Text>
           </View>
+          </Pressable>
           <View style={styles.actionsWrap}>{renderActions(item, name)}</View>
         </View>
       );
     },
-    [palette, renderActions],
+    [palette, renderActions, navigation],
   );
 
   return (
@@ -402,6 +410,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: radii.md,
   },
+  rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
   avatar: { width: 52, height: 52, borderRadius: radii.pill },
   avatarFallback: { alignItems: 'center', justifyContent: 'center' },
   avatarInitial: { fontSize: 18, fontWeight: '700' },

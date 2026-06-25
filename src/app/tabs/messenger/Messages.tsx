@@ -42,6 +42,9 @@ import {
 
 interface ConvoUser {
   _id: string;
+  /** Username/handle — the payload carries this as `userID` (the webapp
+   *  reads `userdetails.userID` for profile deep-links). */
+  userID?: string;
   profile?: string;
   fullname: { firstName: string; middleName?: string; lastName: string };
 }
@@ -330,6 +333,7 @@ export default function Messages() {
           profile:
             other.profile && other.profile !== 'none' ? other.profile : undefined,
           receivers: c.users.map(u => u._id),
+          username: other.userID,
         });
         return;
       }

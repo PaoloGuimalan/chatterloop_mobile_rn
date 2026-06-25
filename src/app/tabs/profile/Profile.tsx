@@ -24,28 +24,30 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDispatch, useSelector } from 'react-redux';
 
 import type { AppState } from '../../../redux/store';
 import { useTheme } from '../../../reusables/design/ThemeProvider';
-import { Btn, CLIcon } from '../../../reusables/design/primitives';
+import { Btn, CLIcon, IconBtn } from '../../../reusables/design/primitives';
 import { radii } from '../../../reusables/design/tokens';
 import {
+  AcceptContactRequest,
   AuthCheck,
+  ContactRequest,
   CreatePostRequest,
+  DeclineContactRequest,
   DiaryPreview,
   FeedPost,
   GetDiaryTotalRequest,
   GetPostRequest,
+  GetProfileInfoRequest,
   GetSavedPostsRequest,
   LogoutRequest,
   SavedPost,
 } from '../../../reusables/hooks/requests';
-import PostOptionsSheet, {
-  PostChange,
-} from './user/PostOptionsSheet';
+import PostOptionsSheet, { PostChange } from './user/PostOptionsSheet';
 import { timeSince } from '../../../reusables/hooks/reusable';
 import { pickImages } from '../../../reusables/hooks/imagePicker';
 import {
@@ -67,16 +69,56 @@ import {
 
 const RANGE = 12;
 
+/** Other-user profile payload (the `type === 'user'` branch of
+ *  GetProfileInfo). Page handles are redirected to PageDetail. */
+interface VisitorInfo {
+  type?: string;
+  id: string;
+  userID: string;
+  username: string;
+  fullname: { firstName: string; middleName: string; lastName: string };
+  profile: string;
+  coverphoto: string;
+  email: string;
+  isVerified?: boolean;
+  isBadged?: boolean;
+  connection: {
+    connection_id: string | null;
+    is_connection_present: boolean | null;
+    is_connection_handshaked: boolean | null;
+    is_user_connection_initiator: boolean | null;
+  };
+  slug?: string | null;
+  name?: string;
+  description?: string | null;
+  cover_photo?: string | null;
+  is_verified?: boolean;
+  is_follower?: boolean;
+}
+
 export default function Profile() {
   const { palette } = useTheme();
   const dispatch = useDispatch();
   const nav = useNavigation<any>();
   const authentication = useSelector((s: AppState) => s.authentication);
   const user = authentication.user;
+  const route = useRoute<any>();
+
+  // Unified profile: when a `userID` (handle) param is present and isn't
+  // our own, we render the visitor view (other user's banner + posts +
+  // connection actions) with all owner-only controls filtered out —
+  // mirroring the webapp, which reuses one Profile component for both.
+  const viewedHandle: string | undefined = route.params?.userID;
+  const isOwner = !viewedHandle || viewedHandle === user.username;
+  const isVisitor = !isOwner;
 
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Visitor-only: fetched profile + connection state.
+  const [otherInfo, setOtherInfo] = useState<VisitorInfo | null>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [connBusy, setConnBusy] = useState(false);
 
   // Profile post sections — mirrors the webapp's Posts / Saved / Archives
   // tabs (PostsContainer / SavesContainer / ArchivesContainer).
@@ -189,8 +231,52 @@ export default function Profile() {
     [alerts.length, dispatch, uploadingTarget],
   );
 
+  const loadVisitor = useCallback(
+    async (silent: boolean) => {
+      if (!viewedHandle) return;
+      if (!silent) setIsLoading(true);
+      const result = await GetProfileInfoRequest(viewedHandle);
+      if (!result) {
+        setNotFound(true);
+        setIsLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      const typed = result as unknown as VisitorInfo;
+      // A page handle landed here — hand off to the realm viewer.
+      if (typed.type && typed.type !== 'user') {
+        nav.replace('PageDetail', {
+          realmID: typed.id,
+          slug: typed.slug ?? viewedHandle,
+          name: typed.name ?? '',
+          profile: typed.profile,
+          cover: typed.cover_photo ?? undefined,
+          description: typed.description ?? undefined,
+          isVerified: typed.is_verified,
+          isFollowing: typed.is_follower,
+        });
+        return;
+      }
+      setOtherInfo(typed);
+      const postsResponse = await GetPostRequest({
+        current_user_id: user.userID,
+        userID: typed.userID,
+        page: 1,
+        range: RANGE,
+      });
+      setPosts(postsResponse.results ?? []);
+      setIsLoading(false);
+      setRefreshing(false);
+    },
+    [viewedHandle, user.userID, nav],
+  );
+
   const load = useCallback(
     async (silent: boolean) => {
+      if (isVisitor) {
+        await loadVisitor(silent);
+        return;
+      }
       if (!user.userID) return;
       if (!silent) setIsLoading(true);
       setDiaryLoading(true);
@@ -211,12 +297,62 @@ export default function Profile() {
       setIsLoading(false);
       setRefreshing(false);
     },
-    [user.userID, user.username],
+    [isVisitor, loadVisitor, user.userID, user.username],
   );
 
   useEffect(() => {
     load(false);
   }, [load]);
+
+  // Connection actions (visitor mode) — mirror Search's semantics and
+  // refresh the profile so the button state reflects the new edge.
+  const refreshConnection = useCallback(() => {
+    setConnBusy(false);
+    loadVisitor(true);
+  }, [loadVisitor]);
+
+  const onAddContact = useCallback(() => {
+    if (!otherInfo) return;
+    setConnBusy(true);
+    ContactRequest(
+      { addUsername: otherInfo.userID },
+      dispatch,
+      alerts,
+      refreshConnection,
+    );
+  }, [otherInfo, dispatch, alerts, refreshConnection]);
+
+  const onAcceptContact = useCallback(() => {
+    if (!otherInfo?.connection.connection_id) return;
+    setConnBusy(true);
+    AcceptContactRequest(
+      {
+        connection_id: otherInfo.connection.connection_id,
+        to_user_id: otherInfo.userID,
+      },
+      dispatch,
+      alerts,
+      refreshConnection,
+    );
+  }, [otherInfo, dispatch, alerts, refreshConnection]);
+
+  const onDeclineContact = useCallback(
+    (action: 'decline' | 'remove') => {
+      if (!otherInfo?.connection.connection_id) return;
+      setConnBusy(true);
+      DeclineContactRequest(
+        {
+          connection_id: otherInfo.connection.connection_id,
+          to_user_id: otherInfo.userID,
+          action,
+        },
+        dispatch,
+        alerts,
+        refreshConnection,
+      );
+    },
+    [otherInfo, dispatch, alerts, refreshConnection],
+  );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -293,10 +429,8 @@ export default function Profile() {
     );
   }, []);
 
-  const hasAvatar = user?.profile && user.profile !== 'none';
-  const hasCover =
-    user?.coverphoto && user.coverphoto !== 'none' && user.coverphoto !== '';
-  const fullName = [
+  // Banner fields come from redux (owner) or the fetched profile (visitor).
+  const ownerFullName = [
     user?.fullName?.firstName,
     user?.fullName?.middleName && user?.fullName?.middleName !== 'N/A'
       ? user.fullName.middleName
@@ -306,6 +440,68 @@ export default function Profile() {
     .filter(Boolean)
     .join(' ')
     .trim();
+  const visitorFullName = otherInfo
+    ? [
+        otherInfo.fullname.firstName,
+        otherInfo.fullname.middleName && otherInfo.fullname.middleName !== 'N/A'
+          ? otherInfo.fullname.middleName
+          : null,
+        otherInfo.fullname.lastName,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .trim()
+    : '';
+
+  const display = isVisitor
+    ? {
+        fullName: visitorFullName,
+        username: otherInfo?.username ?? viewedHandle ?? '',
+        email: otherInfo?.email ?? '',
+        profile:
+          otherInfo?.profile && otherInfo.profile !== 'none'
+            ? otherInfo.profile
+            : null,
+        coverphoto:
+          otherInfo?.coverphoto &&
+          otherInfo.coverphoto !== 'none' &&
+          otherInfo.coverphoto !== ''
+            ? otherInfo.coverphoto
+            : null,
+        badged: !!(otherInfo?.isBadged || otherInfo?.isVerified),
+      }
+    : {
+        fullName: ownerFullName,
+        username: user?.username ?? '',
+        email: user?.email ?? '',
+        profile: user?.profile && user.profile !== 'none' ? user.profile : null,
+        coverphoto:
+          user?.coverphoto &&
+          user.coverphoto !== 'none' &&
+          user.coverphoto !== ''
+            ? user.coverphoto
+            : null,
+        badged: false,
+      };
+  const hasAvatar = !!display.profile;
+  const hasCover = !!display.coverphoto;
+  const fullName = display.fullName;
+  const conn = otherInfo?.connection;
+
+  const onMessage = useCallback(() => {
+    if (!otherInfo?.connection.connection_id) return;
+    nav.navigate('Conversation', {
+      conversationID: otherInfo.connection.connection_id,
+      type: 'single',
+      title: visitorFullName,
+      profile:
+        otherInfo.profile && otherInfo.profile !== 'none'
+          ? otherInfo.profile
+          : undefined,
+      receivers: [otherInfo.userID],
+      username: otherInfo.username,
+    });
+  }, [otherInfo, nav, visitorFullName]);
 
   // Three-column grid: dynamic tile size based on viewport so the grid
   // stays edge-to-edge on phones of varying widths.
@@ -387,9 +583,7 @@ export default function Profile() {
       const authorHasAvatar = author.profile && author.profile !== 'none';
       return (
         <Pressable
-          onPress={() =>
-            nav.navigate('PostDetail', { post_id: p.post_id })
-          }
+          onPress={() => nav.navigate('PostDetail', { post_id: p.post_id })}
           style={({ pressed }) => [
             styles.savedRow,
             {
@@ -400,7 +594,10 @@ export default function Profile() {
           ]}
         >
           {authorHasAvatar ? (
-            <Image source={{ uri: author.profile }} style={styles.savedAvatar} />
+            <Image
+              source={{ uri: author.profile }}
+              style={styles.savedAvatar}
+            />
           ) : (
             <View
               style={[
@@ -435,213 +632,319 @@ export default function Profile() {
     [nav, palette],
   );
 
+  const coverImage = hasCover ? (
+    <Image
+      source={{ uri: display.coverphoto as string }}
+      style={StyleSheet.absoluteFill as never}
+      resizeMode="cover"
+    />
+  ) : null;
+  const avatarImage = hasAvatar ? (
+    <Image source={{ uri: display.profile as string }} style={styles.avatar} />
+  ) : (
+    <View style={[styles.avatar, styles.avatarFallback]}>
+      <CLIcon n="person" size={48} color="#fff" />
+    </View>
+  );
+
   const ListHeader = (
     <View>
-      <Pressable
-        onPress={() => editPhoto('cover_photo')}
-        disabled={!!uploadingTarget}
-        style={[
-          styles.cover,
-          { backgroundColor: hasCover ? 'transparent' : palette.brand },
-        ]}
-      >
-        {hasCover ? (
-          <Image
-            source={{ uri: user.coverphoto }}
-            style={StyleSheet.absoluteFill as never}
-            resizeMode="cover"
-          />
-        ) : null}
-        <View style={styles.coverEditBadge}>
-          {uploadingTarget === 'cover_photo' ? (
-            <ActivityIndicator color="#fff" size="small" />
-          ) : (
-            <CLIcon n="photo-camera" size={14} color="#fff" />
-          )}
-        </View>
-      </Pressable>
-
-      <View style={styles.bannerWrap}>
+      {isOwner ? (
         <Pressable
-          onPress={() => editPhoto('profile')}
+          onPress={() => editPhoto('cover_photo')}
           disabled={!!uploadingTarget}
           style={[
-            styles.avatarWrap,
-            { borderColor: palette.bg, backgroundColor: palette.brand300 },
+            styles.cover,
+            { backgroundColor: hasCover ? 'transparent' : palette.brand },
           ]}
         >
-          {hasAvatar ? (
-            <Image source={{ uri: user.profile }} style={styles.avatar} />
-          ) : (
-            <View style={[styles.avatar, styles.avatarFallback]}>
-              <CLIcon n="person" size={48} color="#fff" />
-            </View>
-          )}
-          <View style={styles.avatarEditBadge}>
-            {uploadingTarget === 'profile' ? (
+          {coverImage}
+          <View style={styles.coverEditBadge}>
+            {uploadingTarget === 'cover_photo' ? (
               <ActivityIndicator color="#fff" size="small" />
             ) : (
               <CLIcon n="photo-camera" size={14} color="#fff" />
             )}
           </View>
         </Pressable>
-
-        <Text style={[styles.name, { color: palette.text }]} numberOfLines={1}>
-          {fullName || 'Your name'}
-        </Text>
-        {user?.username ? (
-          <Text style={[styles.handle, { color: palette.text2 }]}>
-            @{user.username}
-          </Text>
-        ) : null}
-        {user?.email ? (
-          <Text style={[styles.email, { color: palette.text3 }]}>
-            {user.email}
-          </Text>
-        ) : null}
-
-        <View style={styles.actionsRow}>
-          <Btn
-            label="Settings"
-            iconL="settings"
-            variant="outline"
-            size="sm"
-            onPress={() => nav.navigate('Settings')}
-          />
-          <Btn
-            label="Servers"
-            iconL="dns"
-            variant="outline"
-            size="sm"
-            onPress={() => nav.navigate('Servers')}
-          />
-        </View>
-        <View style={styles.actionsRow}>
-          <Btn
-            label="Pages"
-            iconL="auto-stories"
-            variant="outline"
-            size="sm"
-            onPress={() => nav.navigate('Pages')}
-          />
-        </View>
-
-        <Pressable
-          onPress={() => nav.navigate('Diary')}
-          style={({ pressed }) => [
-            styles.diaryCard,
-            {
-              backgroundColor: palette.surface,
-              borderColor: palette.border,
-              opacity: pressed ? 0.7 : 1,
-            },
+      ) : (
+        <View
+          style={[
+            styles.cover,
+            { backgroundColor: hasCover ? 'transparent' : palette.brand },
           ]}
         >
-          <View
-            style={[styles.diaryIcon, { backgroundColor: palette.brandSoft }]}
+          {coverImage}
+        </View>
+      )}
+
+      <View style={styles.bannerWrap}>
+        {isOwner ? (
+          <Pressable
+            onPress={() => editPhoto('profile')}
+            disabled={!!uploadingTarget}
+            style={[
+              styles.avatarWrap,
+              { borderColor: palette.bg, backgroundColor: palette.brand300 },
+            ]}
           >
-            <CLIcon n="book" size={20} color={palette.brand} />
+            {avatarImage}
+            <View style={styles.avatarEditBadge}>
+              {uploadingTarget === 'profile' ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <CLIcon n="photo-camera" size={14} color="#fff" />
+              )}
+            </View>
+          </Pressable>
+        ) : (
+          <View
+            style={[
+              styles.avatarWrap,
+              { borderColor: palette.bg, backgroundColor: palette.brand300 },
+            ]}
+          >
+            {avatarImage}
           </View>
-          <View style={styles.diaryBody}>
-            <Text style={[styles.diaryHead, { color: palette.text }]}>
-              Diary
-            </Text>
-            {diaryLoading ? (
-              <Text style={[styles.diarySub, { color: palette.text3 }]}>
-                Loading…
-              </Text>
-            ) : !diary || diary.total_entries === 0 ? (
-              <Text style={[styles.diarySub, { color: palette.text3 }]}>
-                No entries yet · tap to start journaling
-              </Text>
-            ) : (
+        )}
+
+        <View style={styles.nameRow}>
+          <Text
+            style={[styles.name, { color: palette.text }]}
+            numberOfLines={1}
+          >
+            {fullName || (isOwner ? 'Your name' : `@${display.username}`)}
+          </Text>
+          {display.badged ? (
+            <CLIcon n="verified" size={18} color={palette.brand} />
+          ) : null}
+        </View>
+        {display.username ? (
+          <Text style={[styles.handle, { color: palette.text2 }]}>
+            @{display.username}
+          </Text>
+        ) : null}
+        {display.email ? (
+          <Text style={[styles.email, { color: palette.text3 }]}>
+            {display.email}
+          </Text>
+        ) : null}
+
+        {isVisitor ? (
+          <View style={styles.actionsRow}>
+            {conn?.is_connection_present && conn?.is_connection_handshaked ? (
               <>
-                <Text style={[styles.diarySub, { color: palette.text2 }]}>
-                  {diary.total_entries}{' '}
-                  {diary.total_entries === 1 ? 'entry' : 'entries'}
-                  {diary.latest_entry
-                    ? ` · last ${timeSince(diary.latest_entry)}`
-                    : ''}
-                </Text>
-                {diary.top_tags.length > 0 ? (
-                  <View style={styles.diaryTagRow}>
-                    {diary.top_tags.slice(0, 4).map(t => (
-                      <View
-                        key={t.id}
-                        style={[
-                          styles.diaryTag,
-                          { backgroundColor: palette.brandSoft },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.diaryTagText,
-                            { color: palette.brand },
-                          ]}
-                        >
-                          {t.name}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
+                <Btn
+                  label="Message"
+                  iconL="forum"
+                  size="sm"
+                  onPress={onMessage}
+                />
+                <Btn
+                  label="Friends"
+                  iconL="how-to-reg"
+                  variant="outline"
+                  size="sm"
+                  disabled={connBusy}
+                  onPress={() => onDeclineContact('remove')}
+                />
               </>
+            ) : conn?.is_connection_present &&
+              !conn?.is_connection_handshaked ? (
+              conn?.is_user_connection_initiator ? (
+                <Btn
+                  label="Requested"
+                  variant="outline"
+                  size="sm"
+                  disabled={connBusy}
+                  onPress={() => onDeclineContact('remove')}
+                />
+              ) : (
+                <>
+                  <Btn
+                    label="Accept"
+                    iconL="check"
+                    size="sm"
+                    disabled={connBusy}
+                    onPress={onAcceptContact}
+                  />
+                  <Btn
+                    label="Decline"
+                    variant="outline"
+                    size="sm"
+                    disabled={connBusy}
+                    onPress={() => onDeclineContact('decline')}
+                  />
+                </>
+              )
+            ) : (
+              <Btn
+                label="Add"
+                iconL="person-add"
+                variant="soft"
+                size="sm"
+                disabled={connBusy}
+                onPress={onAddContact}
+              />
             )}
           </View>
-          <CLIcon n="chevron-right" size={18} color={palette.text3} />
-        </Pressable>
+        ) : null}
 
-        <Pressable
-          onPress={() => {
-            clearStates();
-            CloseSSENotifications();
-            LogoutRequest(dispatch);
-          }}
-          style={styles.logoutBtn}
-        >
-          <Text style={[styles.logoutText, { color: palette.pink }]}>
-            Log out
-          </Text>
-        </Pressable>
-      </View>
+        {isOwner ? (
+          <>
+            <View style={styles.actionsRow}>
+              <Btn
+                label="Settings"
+                iconL="settings"
+                variant="outline"
+                size="sm"
+                onPress={() => nav.navigate('Settings')}
+              />
+              <Btn
+                label="Servers"
+                iconL="dns"
+                variant="outline"
+                size="sm"
+                onPress={() => nav.navigate('Servers')}
+              />
+            </View>
+            <View style={styles.actionsRow}>
+              <Btn
+                label="Pages"
+                iconL="auto-stories"
+                variant="outline"
+                size="sm"
+                onPress={() => nav.navigate('Pages')}
+              />
+            </View>
 
-      <View style={styles.segmentRow}>
-        {(
-          [
-            { key: 'posts', icon: 'grid-view', label: 'Posts' },
-            { key: 'saved', icon: 'bookmark', label: 'Saved' },
-            { key: 'archived', icon: 'inventory-2', label: 'Archived' },
-          ] as { key: Segment; icon: string; label: string }[]
-        ).map(seg => {
-          const active = segment === seg.key;
-          return (
             <Pressable
-              key={seg.key}
-              onPress={() => onSelectSegment(seg.key)}
-              style={[
-                styles.segmentBtn,
+              onPress={() => nav.navigate('Diary')}
+              style={({ pressed }) => [
+                styles.diaryCard,
                 {
-                  backgroundColor: active ? palette.brandSoft : 'transparent',
+                  backgroundColor: palette.surface,
+                  borderColor: palette.border,
+                  opacity: pressed ? 0.7 : 1,
                 },
               ]}
             >
-              <CLIcon
-                n={seg.icon}
-                size={17}
-                color={active ? palette.brand : palette.text3}
-              />
-              <Text
+              <View
                 style={[
-                  styles.segmentLabel,
-                  { color: active ? palette.brand : palette.text3 },
+                  styles.diaryIcon,
+                  { backgroundColor: palette.brandSoft },
                 ]}
               >
-                {seg.label}
+                <CLIcon n="book" size={20} color={palette.brand} />
+              </View>
+              <View style={styles.diaryBody}>
+                <Text style={[styles.diaryHead, { color: palette.text }]}>
+                  Diary
+                </Text>
+                {diaryLoading ? (
+                  <Text style={[styles.diarySub, { color: palette.text3 }]}>
+                    Loading…
+                  </Text>
+                ) : !diary || diary.total_entries === 0 ? (
+                  <Text style={[styles.diarySub, { color: palette.text3 }]}>
+                    No entries yet · tap to start journaling
+                  </Text>
+                ) : (
+                  <>
+                    <Text style={[styles.diarySub, { color: palette.text2 }]}>
+                      {diary.total_entries}{' '}
+                      {diary.total_entries === 1 ? 'entry' : 'entries'}
+                      {diary.latest_entry
+                        ? ` · last ${timeSince(diary.latest_entry)}`
+                        : ''}
+                    </Text>
+                    {diary.top_tags.length > 0 ? (
+                      <View style={styles.diaryTagRow}>
+                        {diary.top_tags.slice(0, 4).map(t => (
+                          <View
+                            key={t.id}
+                            style={[
+                              styles.diaryTag,
+                              { backgroundColor: palette.brandSoft },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.diaryTagText,
+                                { color: palette.brand },
+                              ]}
+                            >
+                              {t.name}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    ) : null}
+                  </>
+                )}
+              </View>
+              <CLIcon n="chevron-right" size={18} color={palette.text3} />
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                clearStates();
+                CloseSSENotifications();
+                LogoutRequest(dispatch);
+              }}
+              style={styles.logoutBtn}
+            >
+              <Text style={[styles.logoutText, { color: palette.pink }]}>
+                Log out
               </Text>
             </Pressable>
-          );
-        })}
+          </>
+        ) : null}
       </View>
+
+      {isOwner ? (
+        <View style={styles.segmentRow}>
+          {(
+            [
+              { key: 'posts', icon: 'grid-view', label: 'Posts' },
+              { key: 'saved', icon: 'bookmark', label: 'Saved' },
+              { key: 'archived', icon: 'inventory-2', label: 'Archived' },
+            ] as { key: Segment; icon: string; label: string }[]
+          ).map(seg => {
+            const active = segment === seg.key;
+            return (
+              <Pressable
+                key={seg.key}
+                onPress={() => onSelectSegment(seg.key)}
+                style={[
+                  styles.segmentBtn,
+                  {
+                    backgroundColor: active ? palette.brandSoft : 'transparent',
+                  },
+                ]}
+              >
+                <CLIcon
+                  n={seg.icon}
+                  size={17}
+                  color={active ? palette.brand : palette.text3}
+                />
+                <Text
+                  style={[
+                    styles.segmentLabel,
+                    { color: active ? palette.brand : palette.text3 },
+                  ]}
+                >
+                  {seg.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : (
+        <Text style={[styles.sectionLabel, { color: palette.text3 }]}>
+          POSTS
+        </Text>
+      )}
     </View>
   );
 
@@ -650,7 +953,31 @@ export default function Profile() {
       edges={['top']}
       style={[styles.screen, { backgroundColor: palette.bg }]}
     >
-      {isLoading && !refreshing ? (
+      {viewedHandle ? (
+        <View style={[styles.headerBar, { borderBottomColor: palette.border }]}>
+          <IconBtn
+            n="arrow-back"
+            iconSize={22}
+            color={palette.text}
+            onPress={() => nav.goBack()}
+          />
+          <Text
+            numberOfLines={1}
+            style={[styles.headerTitle, { color: palette.text }]}
+          >
+            {fullName || 'Profile'}
+          </Text>
+        </View>
+      ) : null}
+
+      {isVisitor && notFound ? (
+        <View style={styles.center}>
+          <CLIcon n="person-off" size={30} color={palette.text3} />
+          <Text style={[styles.emptyText, { color: palette.text3 }]}>
+            Profile not found
+          </Text>
+        </View>
+      ) : isLoading && !refreshing ? (
         <ScrollView contentContainerStyle={styles.singleColumn}>
           {ListHeader}
           <View style={styles.center}>
@@ -733,6 +1060,26 @@ export default function Profile() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  headerBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+  },
+  headerTitle: {
+    flex: 1,
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+  },
   singleColumn: { paddingBottom: 32 },
   listContent: { paddingHorizontal: 16, paddingBottom: 32, gap: 4 },
   columnWrapper: { gap: 4 },
@@ -781,7 +1128,7 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
     letterSpacing: -0.4,
-    marginTop: 10,
+    flexShrink: 1,
   },
   handle: { fontSize: 14 },
   email: { fontSize: 12.5, marginTop: 1 },

@@ -75,6 +75,8 @@ interface DisplayRow {
   showOnline: boolean;
   type: 'single' | 'group' | 'server';
   receivers: string[];
+  /** Other participant's handle for single chats — header deep-link. */
+  username?: string;
   titleColor?: string;
   titleIcon?: string;
 }
@@ -124,6 +126,7 @@ export default function ArchivedMessages() {
               showOnline: isUserOnline(activeuserslist, other._id),
               type: 'single',
               receivers: c.users.map(u => u._id),
+              username: other.userID,
             },
           ];
         }
@@ -213,6 +216,7 @@ export default function ArchivedMessages() {
               title: item.title,
               profile: item.profile,
               receivers: item.receivers,
+              username: item.username,
             })
           }
           style={({ pressed }) => [

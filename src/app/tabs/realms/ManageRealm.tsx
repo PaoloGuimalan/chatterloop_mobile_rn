@@ -803,7 +803,10 @@ function PersonRow({
   onAction: () => void;
 }) {
   const { palette } = useTheme();
+  const nav = useNavigation<any>();
   const hasAvatar = account.profile && account.profile !== 'none';
+  const openProfile = () =>
+    nav.navigate('UserProfile', { userID: account.username });
   return (
     <View
       style={[
@@ -811,29 +814,31 @@ function PersonRow({
         { backgroundColor: palette.surface2, borderColor: palette.border },
       ]}
     >
-      {hasAvatar ? (
-        <Image source={{ uri: account.profile }} style={styles.personAvatar} />
-      ) : (
-        <View
-          style={[
-            styles.personAvatar,
-            styles.avatarFallback,
-            { backgroundColor: palette.brandSoft },
-          ]}
-        >
-          <Text style={[styles.personInitial, { color: palette.brand }]}>
-            {account.first_name.charAt(0).toUpperCase()}
+      <Pressable style={styles.personMain} onPress={openProfile}>
+        {hasAvatar ? (
+          <Image source={{ uri: account.profile }} style={styles.personAvatar} />
+        ) : (
+          <View
+            style={[
+              styles.personAvatar,
+              styles.avatarFallback,
+              { backgroundColor: palette.brandSoft },
+            ]}
+          >
+            <Text style={[styles.personInitial, { color: palette.brand }]}>
+              {account.first_name.charAt(0).toUpperCase()}
+            </Text>
+          </View>
+        )}
+        <View style={styles.flex1}>
+          <Text numberOfLines={1} style={[styles.personName, { color: palette.text }]}>
+            {accountName(account)}
+          </Text>
+          <Text numberOfLines={1} style={[styles.personSub, { color: palette.text2 }]}>
+            {subtitle}
           </Text>
         </View>
-      )}
-      <View style={styles.flex1}>
-        <Text numberOfLines={1} style={[styles.personName, { color: palette.text }]}>
-          {accountName(account)}
-        </Text>
-        <Text numberOfLines={1} style={[styles.personSub, { color: palette.text2 }]}>
-          {subtitle}
-        </Text>
-      </View>
+      </Pressable>
       {actionLabel ? (
         <Pressable
           onPress={onAction}
@@ -946,6 +951,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: radii.md,
   },
+  personMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   personAvatar: { width: 40, height: 40, borderRadius: radii.pill },
   personInitial: { fontSize: 15, fontWeight: '700' },
   personName: { fontSize: 14, fontWeight: '700' },

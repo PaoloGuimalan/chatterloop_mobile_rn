@@ -1,4 +1,3 @@
-/* eslint-disable react-native/no-inline-styles */
 /* Conversation thread — scoped port of
  * webapp/src/app/tabs/messenger/Conversation.tsx (2369 lines).
  *
@@ -19,7 +18,13 @@
  *   - Server / group / channel variants beyond what's covered by the
  *     route params shape. */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActivityIndicator,
   DeviceEventEmitter,
@@ -40,10 +45,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
 
 import type { AppState } from '../../../redux/store';
-import {
-  REMOVE_REJECTED_CALL_LIST,
-  SET_ALERTS,
-} from '../../../redux/types';
+import { REMOVE_REJECTED_CALL_LIST, SET_ALERTS } from '../../../redux/types';
 import { useTheme } from '../../../reusables/design/ThemeProvider';
 import { CLIcon, IconBtn } from '../../../reusables/design/primitives';
 import { radii } from '../../../reusables/design/tokens';
@@ -80,6 +82,10 @@ interface ConversationParams {
   profile?: string;
   /** User IDs the message should be delivered to. */
   receivers: string[];
+  /** Other participant's username/handle for single chats — lets the
+   *  header deep-link to their profile. Openers that know it pass it
+   *  through; `receivers` only carry ids, never usernames. */
+  username?: string;
 }
 
 const RANGE = 20;
@@ -289,6 +295,27 @@ export default function Conversation() {
     [authentication.user.fullName?.firstName, contactslist.results, me],
   );
 
+  // Resolve the other participant's username for single chats so the
+  // header can deep-link to their profile. Only contacts carry a
+  // username; non-contacts leave this null and the header isn't tappable.
+  const otherUsername = useMemo(() => {
+    if (params.type !== 'single') return null;
+    const otherID = params.receivers.find(r => r !== me) ?? params.receivers[0];
+    if (!otherID) return null;
+    for (const c of contactslist.results ?? []) {
+      if (c.type !== 'single') continue;
+      if (c.action_by?.id === otherID) return c.action_by.username ?? null;
+      if (c.involved_user?.id === otherID)
+        return c.involved_user.username ?? null;
+    }
+    return null;
+  }, [params.type, params.receivers, contactslist.results, me]);
+
+  // The handle used to deep-link the header to the other user's profile.
+  // Prefer the username threaded through params; fall back to contacts.
+  const profileHandle =
+    params.type === 'single' ? params.username ?? otherUsername : null;
+
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [draft, setDraft] = useState('');
@@ -301,9 +328,7 @@ export default function Conversation() {
   // and forward {isReply, replyingTo} to SendMessageRequest.
   const [replyingTo, setReplyingTo] = useState<DisplayMessage | null>(null);
   // Long-press target for the floating action sheet.
-  const [actionTarget, setActionTarget] = useState<DisplayMessage | null>(
-    null,
-  );
+  const [actionTarget, setActionTarget] = useState<DisplayMessage | null>(null);
   // In-app image lightbox source. Null = closed.
   const [lightboxURI, setLightboxURI] = useState<string | null>(null);
   // Set when an outbound call is ringing. Drives the inline
@@ -637,9 +662,7 @@ export default function Conversation() {
     const ok = await CallRequest({
       callType: 'audio',
       callDisplayName:
-        params.type === 'single'
-          ? callerName
-          : `${params.title} (Group)`,
+        params.type === 'single' ? callerName : `${params.title} (Group)`,
       conversationType: params.type,
       conversationID: params.conversationID,
       caller: { name: callerName, userID: authentication.user.userID },
@@ -800,10 +823,7 @@ export default function Conversation() {
       const isToggleOff = mine?.emoji === emoji;
       const nextReactions = isToggleOff
         ? existing.filter(r => r.userID !== me)
-        : [
-            ...existing.filter(r => r.userID !== me),
-            { userID: me, emoji },
-          ];
+        : [...existing.filter(r => r.userID !== me), { userID: me, emoji }];
       setMessages(prev =>
         prev.map(m =>
           m.messageID === cnvs.messageID
@@ -883,14 +903,7 @@ export default function Conversation() {
         />
       );
     },
-    [
-      me,
-      memberName,
-      onLongPressMessage,
-      onOpenImage,
-      openMedia,
-      params.type,
-    ],
+    [me, memberName, onLongPressMessage, onOpenImage, openMedia, params.type],
   );
 
   const hasAvatar = params.profile && params.profile !== 'none';
@@ -908,36 +921,51 @@ export default function Conversation() {
           color={palette.text}
           onPress={() => navigation.goBack()}
         />
-        {hasAvatar ? (
-          <Image source={{ uri: params.profile }} style={styles.headerAvatar} />
-        ) : (
-          <View
-            style={[
-              styles.headerAvatar,
-              styles.avatarFallback,
-              { backgroundColor: palette.brandSoft },
-            ]}
-          >
-            <Text style={[styles.headerInitial, { color: palette.brand }]}>
-              {initial}
+        <Pressable
+          style={styles.headerIdentity}
+          // UserProfile keys off the username (handle). Prefer the handle
+          // passed in params (from the conversation user payload); fall
+          // back to resolving it from contacts. Never the raw receiver id.
+          disabled={!profileHandle}
+          onPress={() =>
+            profileHandle &&
+            navigation.navigate('UserProfile', { userID: profileHandle })
+          }
+        >
+          {hasAvatar ? (
+            <Image
+              source={{ uri: params.profile }}
+              style={styles.headerAvatar}
+            />
+          ) : (
+            <View
+              style={[
+                styles.headerAvatar,
+                styles.avatarFallback,
+                { backgroundColor: palette.brandSoft },
+              ]}
+            >
+              <Text style={[styles.headerInitial, { color: palette.brand }]}>
+                {initial}
+              </Text>
+            </View>
+          )}
+          <View style={styles.headerCopy}>
+            <Text
+              numberOfLines={1}
+              style={[styles.headerTitle, { color: palette.text }]}
+            >
+              {params.title}
+            </Text>
+            <Text style={[styles.headerSub, { color: palette.text3 }]}>
+              {params.type === 'group'
+                ? 'Group chat'
+                : params.type === 'server'
+                ? 'Server channel'
+                : 'Direct message'}
             </Text>
           </View>
-        )}
-        <View style={styles.headerCopy}>
-          <Text
-            numberOfLines={1}
-            style={[styles.headerTitle, { color: palette.text }]}
-          >
-            {params.title}
-          </Text>
-          <Text style={[styles.headerSub, { color: palette.text3 }]}>
-            {params.type === 'group'
-              ? 'Group chat'
-              : params.type === 'server'
-              ? 'Server channel'
-              : 'Direct message'}
-          </Text>
-        </View>
+        </Pressable>
         {params.type === 'server' ? null : (
           <IconBtn
             n="call"
@@ -1156,10 +1184,7 @@ export default function Conversation() {
         onReact={onReact}
       />
 
-      <ImageLightbox
-        uri={lightboxURI}
-        onClose={() => setLightboxURI(null)}
-      />
+      <ImageLightbox uri={lightboxURI} onClose={() => setLightboxURI(null)} />
 
       {outgoing ? (
         <View style={styles.outgoingScrim}>
@@ -1282,6 +1307,12 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     gap: 8,
     borderBottomWidth: 1,
+  },
+  headerIdentity: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   headerAvatar: { width: 36, height: 36, borderRadius: radii.pill },
   avatarFallback: { alignItems: 'center', justifyContent: 'center' },

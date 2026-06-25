@@ -19,6 +19,7 @@ import {
   View,
 } from 'react-native';
 import { useSelector } from 'react-redux';
+import { useNavigation } from '@react-navigation/native';
 
 import type { AppState } from '../../../redux/store';
 import { useTheme } from '../../../reusables/design/ThemeProvider';
@@ -30,6 +31,7 @@ import type { MessageReaction } from './Conversation';
 interface ResolvedUser {
   name: string;
   profile?: string;
+  username?: string;
 }
 
 interface Props {
@@ -40,10 +42,17 @@ interface Props {
 
 export default function ReactionsModal({ visible, reactions, onClose }: Props) {
   const { palette } = useTheme();
+  const navigation = useNavigation<any>();
   const contacts = useSelector(
     (s: AppState) => s.contactslist as PaginationProp<IContact>,
   );
   const auth = useSelector((s: AppState) => s.authentication.user);
+
+  const openProfile = (username?: string) => {
+    if (!username) return;
+    onClose();
+    navigation.navigate('UserProfile', { userID: username });
+  };
 
   // userID -> { name, profile } lookup built from the contact graph plus
   // the viewer themselves.
@@ -54,6 +63,7 @@ export default function ReactionsModal({ visible, reactions, onClose }: Props) {
       name: 'You',
       profile:
         auth.profile && auth.profile !== 'none' ? auth.profile : undefined,
+      username: auth.username,
     });
     (contacts.results ?? []).forEach(c => {
       if (c.type !== 'single' || !c.involved_user || !c.action_by) return;
@@ -63,6 +73,7 @@ export default function ReactionsModal({ visible, reactions, onClose }: Props) {
       map.set(u.id, {
         name: `${u.first_name}${middle} ${u.last_name}`.trim(),
         profile: u.profile && u.profile !== 'none' ? u.profile : undefined,
+        username: u.username ?? undefined,
       });
     });
     return map;
@@ -110,7 +121,11 @@ export default function ReactionsModal({ visible, reactions, onClose }: Props) {
             keyExtractor={r => r.key}
             style={styles.list}
             renderItem={({ item }) => (
-              <View style={styles.row}>
+              <Pressable
+                style={styles.row}
+                disabled={!item.username}
+                onPress={() => openProfile(item.username)}
+              >
                 {item.profile ? (
                   <Image source={{ uri: item.profile }} style={styles.avatar} />
                 ) : (
@@ -133,7 +148,7 @@ export default function ReactionsModal({ visible, reactions, onClose }: Props) {
                   {item.name}
                 </Text>
                 <Text style={styles.emoji}>{item.emoji}</Text>
-              </View>
+              </Pressable>
             )}
             ListEmptyComponent={
               <View style={styles.empty}>

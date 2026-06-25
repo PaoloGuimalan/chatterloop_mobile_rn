@@ -641,6 +641,8 @@ export interface ArchivedConvo {
   messageDate?: { date: string; time?: string } | string;
   users?: {
     _id: string;
+    /** Username/handle (payload field name is `userID`). */
+    userID?: string;
     profile?: string;
     fullname: { firstName: string; middleName?: string; lastName: string };
   }[];
